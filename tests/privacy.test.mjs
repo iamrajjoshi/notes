@@ -46,6 +46,7 @@ async function releaseTextFiles(target) {
 
 test("public release files contain no private or environment-specific material", async () => {
   const roots = [
+    ".github",
     ".gitignore",
     ".oxfmtrc.json",
     ".oxlintrc.json",
