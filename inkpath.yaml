@@ -1,0 +1,12 @@
+content: notes
+output: site
+public: public
+
+theme:
+  stylesheet: theme.css
+
+site:
+  title: Raj's Notes
+  description: Notes Raj is collecting, mostly about software systems, infrastructure, AI inference, and agent engineering.
+  lang: en
+  logo: favicon.svg

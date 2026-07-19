@@ -1,0 +1,29 @@
+{
+  "name": "@iamrajjoshi/notes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Raj's personal engineering notes.",
+  "type": "module",
+  "scripts": {
+    "build": "inkpath build",
+    "check": "inkpath check",
+    "dev": "inkpath dev",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint tests notes",
+    "test": "pnpm build && node --test tests/*.test.mjs",
+    "verify": "pnpm format:check && pnpm lint && pnpm check && pnpm test"
+  },
+  "devDependencies": {
+    "@iamrajjoshi/inkpath": "github:iamrajjoshi/inkpath#56fc260c9d5380315b4f18c572684c31849ed2a3",
+    "oxfmt": "0.59.0",
+    "oxlint": "1.74.0",
+    "yaml": "2.9.0"
+  },
+  "packageManager": "pnpm@10.25.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
