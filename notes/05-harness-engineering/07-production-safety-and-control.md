@@ -1,11 +1,9 @@
 ---
 title: Production safety and control
-shortTitle: Safety controls
 description: Threat-model the full agent path, apply least privilege, contain prompt injection, and give operators audit, budget, and emergency controls.
-collection: harness-engineering
 slug: production-safety-and-control
 order: 7
-number: HE7
+identifier: HE7
 duration: 160 min
 difficulty: Advanced
 tags:
@@ -20,15 +18,6 @@ tags:
 ## Working model
 
 Assume any decision can be wrong. Limit the authority available at that moment, make consequential effects interruptible, and preserve enough evidence for an operator to understand and contain the result.
-
-## Questions this note answers
-
-- Threat-model users, content, models, tools, identities, networks, artifacts, and operators
-- Apply least privilege and fail-closed approval to high-impact actions
-- Define the OAuth client, authorization server, resource server, access token, audience, and scope
-- Bind remote MCP authorization to the intended server and downstream identity
-- Design redacted audit and replay records that preserve causality
-- Specify kill switches, quotas, and budget enforcement outside the model loop
 
 ## Prompt injection is one path through a larger system
 
@@ -46,11 +35,11 @@ Human approval should bind to a concrete preview: operation, target, important p
 
 > **Toy approval gate.** The host pauses a selected write until it receives a decision bound to that exact call. Approval answers whether this effect may run; an operation ID answers whether the same effect already ran. One can't replace the other.
 
-### Code walk: prove that approval fails closed
+### Worked approval matrix: fail closed
 
-Reuse the `call-17` approval record from [Intent and executable contracts](02-intent-and-executable-contracts.md). Put a counter in the executor stub, then run five cases: no decision, explicit denial, changed arguments digest, expired approval, and an exact approval. The first four cases must return a structured rejection while the counter stays at zero; the last may increment it once.
+Using the `call-17` record from [Intent and executable contracts](02-intent-and-executable-contracts.md), a fail-closed matrix contains five cases: no decision, explicit denial, changed arguments digest, expired approval, and an exact approval. The first four return a structured rejection while an executor counter stays at zero; only the exact approval may increment it once.
 
-Retry the accepted call with the same operation ID. The executor should return its stored receipt rather than perform the write again. That second assertion proves the difference between permission and duplicate-effect control.
+A retry of the accepted call with the same operation ID returns its stored receipt rather than performing the write again. That separate assertion proves the difference between permission and duplicate-effect control.
 
 ## Bind MCP tokens to one protected server
 
@@ -114,13 +103,13 @@ A kill switch should block new work, interrupt or quarantine active work, revoke
 
 > **Toy containment stack.** Combine a disposable workspace, a per-run identity, default-deny network access, resource limits, and a hard deadline. Those controls reduce the effect of a bad call, while host policy still decides which calls may enter the sandbox.
 
-### Code walk: keep permission resolution outside the prompt
+### Worked policy boundary: permission stays outside the prompt
 
-Use the toy launcher grant from [Tools, environments, and sandboxes](04-tools-environments-and-sandboxes.md). Add a file named `agent-policy.yaml` inside the checkout that claims the run may write anywhere and contact any host. Treat that file as untrusted repository text; the launcher grant remains unchanged.
+Suppose the toy launcher grant from [Tools, environments, and sandboxes](04-tools-environments-and-sandboxes.md) encounters an `agent-policy.yaml` file inside the checkout that claims the run may write anywhere and contact any host. The file is untrusted repository text, so the launcher grant remains unchanged.
 
-Send four proposals through the policy function: an allowed source read, a write outside `packages/parser`, an outbound HTTP call, and an otherwise allowed test after the deadline. Record a distinct rejection class for each failed layer. A generic `tool failed` result loses the evidence an operator needs.
+An allowed source read passes. A write outside `packages/parser`, an outbound HTTP call, and an otherwise allowed test after the deadline fail at different policy layers and receive distinct rejection classes. A generic `tool failed` result would lose the evidence an operator needs.
 
-## Practice containment with incomplete information
+## Incident containment starts with incomplete information
 
 A safety incident begins with uncertainty about active workers and committed effects. The operator path should identify affected task, tenant, tool, model, policy, and destination versions; block new dispatch; revoke or disable scoped identities; cancel or quarantine active runs; and collect external receipts for reconciliation. Keep the stop service independent from the worker control loop so a stuck model call cannot prevent containment.
 

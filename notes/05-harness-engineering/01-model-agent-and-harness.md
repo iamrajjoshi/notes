@@ -1,11 +1,9 @@
 ---
 title: Model, agent, harness, and failure taxonomy
-shortTitle: Model to harness
 description: Separate model behavior from the agent loop and its host runtime, then classify failures at the layer that can actually fix them.
-collection: harness-engineering
 slug: model-agent-and-harness
 order: 1
-number: HE1
+identifier: HE1
 duration: 95 min
 difficulty: Foundation
 tags:
@@ -18,15 +16,6 @@ tags:
 ## Working model
 
 The model proposes the next move. The agent loop lets it observe and act. The harness owns the rails: inputs, capabilities, state, limits, evidence, and termination.
-
-## Questions this note answers
-
-- Distinguish a model, an agent, a workflow, and an agent harness
-- Define messages, tokens, context windows, tool calls, executors, middleware, and traces
-- Trace one tool call through model choice, host execution, and returned evidence
-- Run a provider-neutral model-to-tool loop without an API key or third-party package
-- Classify failures by intent, context, tool, environment, state, verification, or safety
-- Choose a deterministic workflow when open-ended agency adds no value
 
 ## A model predicts; an agent acts through a host
 
@@ -139,11 +128,11 @@ State failures lose progress or replay an effect. Verification failures accept p
 
 > **Incident habit.** Record the first bad decision and the evidence visible at that moment. The final wrong answer is often several steps downstream of the fixable defect.
 
-### Code walk: separate the turn loop from its guardrails
+### Worked trace: separate the turn loop from its guardrails
 
-Open [minimal-harness.mjs](examples/minimal-harness.mjs) and start at `runHarness`. Follow one iteration through `assembleModelStream`, argument validation, authorization, tool execution, receipt storage, and `verify`. Mark every branch that can reject or stop the run without asking the model for permission.
+In [minimal-harness.mjs](examples/minimal-harness.mjs), `runHarness` passes one iteration through `assembleModelStream`, argument validation, authorization, tool execution, receipt storage, and `verify`. Several branches can reject or stop the run without asking the model for permission.
 
-Then compare `ScriptedModel`, `InvalidArgumentsModel`, and `LoopingModel`. The models produce different proposals, while the same host code enforces schemas, tenant scope, effect reconciliation, and the step budget. For each control, write its trigger, the state it reads, the action it takes, and the failure it refuses to hide.
+`ScriptedModel`, `InvalidArgumentsModel`, and `LoopingModel` produce different proposals, while the same host code enforces schemas, tenant scope, effect reconciliation, and the step budget. Each control has a visible trigger, reads host-owned state, takes a deterministic action, and refuses to hide a named failure.
 
 ## Start incident review at the first unsupported transition
 

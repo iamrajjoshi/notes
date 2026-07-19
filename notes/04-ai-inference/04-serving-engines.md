@@ -1,11 +1,9 @@
 ---
 title: Serving engines as moving choices
-shortTitle: Serving engines
 description: Compare vLLM, TensorRT-LLM, Triton, and SGLang by workload contract, hardware, integration cost, and measured behavior.
-collection: ai-inference
 slug: serving-engines
 order: 4
-number: AI4
+identifier: AI4
 duration: 150 min
 difficulty: Core
 tags:
@@ -18,14 +16,6 @@ tags:
 ## Working model
 
 A serving engine is software that loads a model, manages its device memory, groups active sequences, and runs the operations that produce tokens. It is one layer of a service. The surrounding platform still owns the public API, caller identity, routing, rollout, fleet capacity, telemetry, and recovery.
-
-## Questions this note answers
-
-- Separate a model execution engine from an API server and fleet control plane
-- Trace normal, streamed, cancelled, queued, and measured requests through a local serving contract
-- Compare four serving projects without freezing current feature tables
-- Write a reproducible engine evaluation plan
-- Identify model, tokenizer, LoRA adapter, streaming, and observability compatibility requirements
 
 ## Place the engine inside the service
 
@@ -49,9 +39,9 @@ For one request, the front end selects a model bundle and engine worker. The pro
 
 ## Run one serving contract before loading a model
 
-The first lab is a small local service: [serving-contract-fixture.mjs](examples/serving-contract-fixture.mjs). It uses only Node's built-in modules and an ephemeral loopback port. It needs no model key, GPU, package install, model download, or external network connection.
+The first executable example is a small local service: [serving-contract-fixture.mjs](examples/serving-contract-fixture.mjs). It uses only Node's built-in modules and an ephemeral loopback port. It needs no model key, GPU, package install, model download, or external network connection.
 
-The fixture is deliberately **not** a language model, tokenizer, inference engine, or performance benchmark. It returns fixed text in fixed-size chunks after small delays. That artificial work makes the service contract visible: HTTP request and response shapes, server-sent events (SSE), client cancellation, an execution limit, a queue, Prometheus text metrics, and a machine-readable evidence record. You will repeat those observations against a real engine later; you must not treat the fixture's character counts or timings as model measurements.
+The fixture is deliberately **not** a language model, tokenizer, inference engine, or performance benchmark. It returns fixed text in fixed-size chunks after small delays. That artificial work makes the service contract visible: HTTP request and response shapes, server-sent events (SSE), client cancellation, an execution limit, a queue, Prometheus text metrics, and a machine-readable evidence record. The same observations can later be collected from a real engine, but the fixture's character counts and timings are not model measurements.
 
 From the repository root, run:
 
@@ -59,27 +49,27 @@ From the repository root, run:
 node notes/04-ai-inference/examples/serving-contract-fixture.mjs demo --requests 8 --concurrency 4
 ```
 
-The command starts a server on `127.0.0.1` using an operating-system-selected port, performs the exercise, prints one JSON baseline record, and closes the server. Node 22 or newer is sufficient. The focused test runs the same contract as assertions:
+The command starts a server on `127.0.0.1` using an operating-system-selected port, runs the request sequence, prints one JSON baseline record, and closes the server. Node 22 or newer is sufficient. The focused test runs the same contract as assertions:
 
 ```sh
 node --test tests/serving-contract-fixture.test.mjs
 ```
 
-### Follow the exercise in request order
+### The local contract follows request order
 
 1. A normal `POST /v1/responses` request sends `{"input":"normal request","stream":false}`. The response contains `fixture:normal request`, a request ID, the fixture model name, and character counts. Those counts prove accounting fields were carried through the contract; they are not token counts.
 2. A streaming request asks for `stream:true`. Its `text/event-stream` response emits four `response.output_text.delta` events and one `response.completed` event. The client reconstructs `fixture:stream request` and retains the event order and terminal usage object.
 3. A second streaming client cancels after its first delta. The server observes that its response closed before completion, stops the simulated work, releases the execution slot, and increments `fixture_requests_cancelled_total`. Client intent alone is not proof of server-side cancellation; the counter supplies the other half of the evidence.
 4. Eight normal requests then run with four closed-loop client workers against two execution slots. At most two requests execute at once, so the extra work waits in the bounded queue. This demonstrates admission and queueing; it does not reproduce an open-loop production arrival process.
-5. `GET /metrics` returns counters, gauges, and latency count-and-sum samples in the Prometheus text exposition format. The exercise records terminal request counts, final active and queued gauges, peak active and queued work, request-latency observations, and time-to-first-chunk observations.
-6. The final JSON joins configuration, runtime, normal response, stream, cancellation, load result, metric snapshot, and interpretation caveats. Keep that record with the code revision when changing the fixture or adapting the exercise to a real engine.
+5. `GET /metrics` returns counters, gauges, and latency count-and-sum samples in the Prometheus text exposition format. The trace records terminal request counts, final active and queued gauges, peak active and queued work, request-latency observations, and time-to-first-chunk observations.
+6. The final JSON joins configuration, runtime, normal response, stream, cancellation, load result, metric snapshot, and interpretation caveats. Keep that record with the code revision when changing the fixture or adapting the contract to a real engine.
 
 With the default command, verify invariants rather than exact timing numbers:
 
 ```text
 1 normal + 1 complete stream + 1 cancelled stream + 8 load = 11 requests
 10 completed + 1 cancelled = 11 terminal requests
-active = 0 and queued = 0 after the exercise
+active = 0 and queued = 0 after the run
 max active = 2 and max queued >= 1
 ```
 
@@ -108,7 +98,7 @@ Use this sequence for a real candidate:
 4. Run the sequence and retain raw responses, stream frames, cancellation evidence, metric snapshots, logs, and the effective configuration.
 5. Add token counts, time to first token, inter-token latency, queue time, KV-cache use, and GPU memory. Then run the open-loop method in AI8 before describing capacity or comparing engines.
 
-The fixture's `/v1/responses` path and event names make the example easy to read; they are not a claim of OpenAI API compatibility. For example, current vLLM documentation exposes `/v1/responses`, `/health`, and `/metrics`, but its Responses API is explicitly a supported subset and its fields and metrics belong to the pinned release. Test the behavior your service uses instead of relying on a shared path name.
+The fixture's `/v1/responses` path and event names make the example easy to read; they are not a claim of OpenAI API compatibility. Current vLLM documentation lists `/v1/responses`, `/health`, and `/metrics`, but compatibility is endpoint- and field-specific, and its metrics belong to the pinned release. Test the behavior your service uses instead of relying on a shared path name.
 
 ## Start with the request and model, not a benchmark winner
 
@@ -162,6 +152,8 @@ This split does not require a large abstraction framework. Define only behavior 
 - Worker evidence: queue phase, batch, cache allocation, model timing, and device faults.
 
 ## Remove incompatible choices before timing survivors
+
+[Distributed inference](06-distributed-inference.md#learn-the-distributed-nouns) gives the full vocabulary used in this section. For now, **tensor parallelism** means splitting operations within a model layer across GPUs; each numbered participating process is a **rank**, and all ranks required for one logical replica form its serving group.
 
 Assume a service needs one named model architecture, one of two named tenant-selected LoRA adapters for each request, server-sent token streaming, JSON-schema-constrained output, four-GPU tensor parallelism, and request cancellation. First build a compatibility fixture for each requirement on the exact candidate release. If an engine cannot load the artifact or silently ignores a required request field, it is not a slower option; it is incompatible for this service.
 

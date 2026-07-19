@@ -1,11 +1,9 @@
 ---
 title: GPU orchestration on Kubernetes
-shortTitle: GPU orchestration
 description: Advertise, allocate, place, share, and autoscale accelerators while respecting hardware topology and startup time.
-collection: ai-inference
 slug: gpu-orchestration
 order: 7
-number: AI7
+identifier: AI7
 duration: 210 min
 difficulty: Advanced
 tags:
@@ -21,20 +19,9 @@ Kubernetes runs containers in Pods on a pool of machines called nodes. Its sched
 
 For inference, define the **serving group** first. A serving group is the complete set of processes and GPUs required for one logical model replica. It may be one four-GPU Pod or four coordinated one-GPU Pods. Capacity, readiness, failure, rollout, and autoscaling must operate on complete serving groups rather than accidentally counting partial ranks as replicas.
 
-## Questions this note answers
-
-- Trace an NVIDIA GPU node from driver initialization through a ready serving Pod
-- Separate GPU Operator, driver, Container Toolkit or CDI, device-plugin, and DCGM responsibilities
-- Request a GPU and diagnose missing allocatable capacity separately from failed runtime injection
-- Calculate how CPU, memory, system reservations, and DaemonSets constrain GPU bin packing
-- Place a four-rank tensor-parallel group without treating four arbitrary free GPUs as one fast fabric
-- Compare a single four-GPU Pod with four coordinated one-GPU rank Pods
-- Distinguish passthrough, vGPU, SR-IOV, MIG, and time slicing
-- Convert measured token demand and cold-start time into complete warm serving groups
-
 ## Establish the Kubernetes path
 
-A Kubernetes **cluster** has a control plane plus worker nodes. A controller turns desired state such as a Deployment into Pods. Each Pod is one scheduling unit containing one or more containers, declared resource needs, and placement constraints. The scheduler chooses a node for an unassigned Pod; the node's **kubelet** asks the container runtime to start its containers and reports status.
+A Kubernetes **cluster** has a control plane plus worker nodes. A **Deployment** declares and maintains a desired number of matching Pods through a controller. Each **Pod** is one scheduling unit containing one or more containers, declared resource needs, and placement constraints. The scheduler chooses a node for an unassigned Pod; the node's **kubelet** asks the container runtime to start its containers and reports status. A **Service** gives callers a stable network identity for a selected set of Pods, while **EndpointSlice** objects record the concrete network endpoints and their readiness behind that Service.
 
 CPU and memory requests help the scheduler decide what fits. A GPU needs an additional integration because Kubernetes does not discover and prepare every accelerator type itself. A vendor device plugin or Dynamic Resource Allocation driver reports available devices and supplies the information needed to attach an allocated device to the Pod.
 
@@ -49,7 +36,7 @@ Read [containers and Kubernetes objects](../01-cloud-infrastructure/02-container
 
 ## Make the node usable before scheduling the model
 
-The NVIDIA GPU Operator is a Kubernetes operator that can deploy and reconcile a supported combination of GPU drivers, NVIDIA Container Toolkit, the NVIDIA device plugin, GPU Feature Discovery, MIG Manager, DCGM, and DCGM Exporter. It does not turn those components into one layer. Each still owns a distinct boundary:
+The NVIDIA GPU Operator is a Kubernetes operator that can deploy and reconcile a supported combination of GPU drivers, NVIDIA Container Toolkit, the NVIDIA device plugin, GPU Feature Discovery, Multi-Instance GPU (MIG) Manager, NVIDIA Data Center GPU Manager (DCGM), and DCGM Exporter. It does not turn those components into one layer. Each still owns a distinct boundary:
 
 | Component                            | What it owns                                                                                                                                                         | What success proves                                                                                                             |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -181,13 +168,13 @@ The `preStop` request begins application drain, but the application must also ha
 
 The device-plugin framework lets a node agent advertise extended resources and pass allocated device information to a container runtime. A Pod requests a whole integer count for the named resource; ordinary overcommit semantics do not apply to that extended resource. For a typical NVIDIA plugin resource, the request and limit can be `nvidia.com/gpu: 4`. If both are stated, they must match.
 
-Dynamic Resource Allocation (DRA) models richer claims and device selection through Kubernetes APIs. Drivers publish devices in `ResourceSlice` objects, administrators define `DeviceClass` policy, and workloads consume `ResourceClaim` or `ResourceClaimTemplate` objects. The core `resource.k8s.io/v1` API reached generally available status in Kubernetes 1.34; current Kubernetes documentation marks DRA stable from 1.35. Optional alpha and beta capabilities continue to mature separately, and a vendor's DRA driver can have a narrower support policy than the Kubernetes API. Pin the cluster version, API version, feature gates, and allocation driver instead of treating one example manifest as timeless.
+Dynamic Resource Allocation (DRA) models richer claims and device selection through Kubernetes APIs. Drivers publish devices in `ResourceSlice` objects, administrators define `DeviceClass` policy, and workloads consume `ResourceClaim` or `ResourceClaimTemplate` objects. The core `resource.k8s.io/v1` API reached generally available status in Kubernetes 1.34. Optional alpha and beta capabilities continue to mature separately, and a vendor's DRA driver can have a narrower support policy than the Kubernetes API. Pin the cluster version, API version, feature gates, and allocation driver instead of treating one example manifest as timeless.
 
 An extended-resource count says “four resources with this name.” It cannot select devices by attributes inside the request. DRA can express richer selection through claims, but only when a compatible driver publishes the required attributes and prepares the device. The NVIDIA DRA driver, for example, has its own versioned installation and GPU-allocation guidance; Kubernetes declaring DRA stable does not make every driver feature production-ready.
 
 ## Bin-pack every requested resource
 
-Suppose an illustrative node has eight GPUs, 96 schedulable vCPUs before reservations, and 768 GiB of memory. Reserve 8 vCPUs and 32 GiB for the operating system, kubelet, container runtime, CNI, GPU Operator DaemonSets, logging, and monitoring. The workload pool is then 8 GPUs, 88 vCPUs, and 736 GiB.
+Suppose an illustrative node has eight GPUs, 96 schedulable vCPUs before reservations, and 768 GiB of memory. Reserve 8 vCPUs and 32 GiB for the operating system, kubelet, container runtime, Container Network Interface (CNI) components, GPU Operator DaemonSets, logging, and monitoring. The workload pool is then 8 GPUs, 88 vCPUs, and 736 GiB.
 
 The example TP4 Pod requests four GPUs, 40 vCPUs, and 300 GiB. Calculate the maximum count independently for every resource and take the minimum:
 
@@ -269,7 +256,7 @@ If a running rank dies, the same serving-group boundary applies. Stop admission 
 
 ## MIG and time slicing make different promises
 
-Whole-device passthrough gives a virtual machine direct ownership behind an input-output memory management unit (IOMMU) boundary. Vendor virtual GPU (vGPU) products expose supported mediated devices, while single-root I/O virtualization (SR-IOV) exposes virtual functions from a physical device. NVIDIA Multi-Instance GPU (MIG) partitions supported GPUs into instances with defined compute and memory resources; time slicing alternates software contexts on a device and does not create the same memory or performance isolation.
+Whole-device passthrough gives a virtual machine direct ownership behind an input-output memory management unit (IOMMU) boundary. Vendor virtual GPU (vGPU) products expose supported mediated devices, while single-root I/O virtualization (SR-IOV) exposes virtual functions from a physical device. MIG partitions supported GPUs into instances with defined compute and memory resources; time slicing alternates software contexts on a device and does not create the same memory or performance isolation.
 
 A Kubernetes resource name alone does not prove tenant isolation. Review the hardware mode, driver, memory boundary, reset and fault behavior, monitoring visibility, and threat model. Repeat the capacity and failure calculations using the actual advertised MIG profile or shared resource rather than counting it as equivalent to a full GPU.
 
@@ -295,7 +282,7 @@ reactive node capacity arrives 14 minutes too late for that target
 
 ## Convert the burst into warm serving groups
 
-Reuse the hypothetical measured envelope from the [production capstone](09-production-safety-and-capstone.md#choose-group-count-from-the-measured-envelope). One TP4 group sustains 18,000 input tokens/s and 4,500 output tokens/s while meeting the service targets. At 40 requests/s, the declared mix produces 48,000 input and 12,000 output tokens/s. Three groups meet both phase rates, and one complete failed-group spare makes four warm groups.
+Use one local hypothetical measured envelope: one TP4 group sustains 18,000 input tokens/s and 4,500 output tokens/s while meeting the service targets. At 40 requests/s, the declared mix produces 48,000 input and 12,000 output tokens/s. Three groups meet both phase rates, and one complete failed-group spare makes four warm groups. [The production rollout case](09-production-safety-and-capstone.md#choose-group-count-from-the-measured-envelope) later reuses the same assumptions when it joins capacity to rollout safety.
 
 Now suppose the same request mix jumps to 80 requests/s. Doubling the rate doubles this illustrative token demand:
 
@@ -313,16 +300,16 @@ immediate burst fleet = 7 groups
 additional groups needed inside the response target = 3
 ```
 
-The 15-minute cold path cannot supply those three groups inside 60 seconds. They must already be ready, the service must hold an equivalent explicitly measured buffer elsewhere, or admission must reject work that cannot meet its deadline. The capstone allows only 200 ms of queueing within its TTFT example. At 80 requests/s that interval contains about 16 mean arrivals, not 15 minutes of cold-start demand, and request count still understates token and KV differences.
+The 15-minute cold path cannot supply those three groups inside 60 seconds. They must already be ready, the service must hold an equivalent explicitly measured buffer elsewhere, or admission must reject work that cannot meet its deadline. The production rollout worked case allows only 200 ms of queueing within its TTFT example. At 80 requests/s that interval contains about 16 mean arrivals, not 15 minutes of cold-start demand, and request count still understates token and KV differences.
 
-This result is not a universal recommendation to keep seven groups warm. It assumes the capstone's token mix, per-group replay result, 80-rps burst, one-group failure promise, and unchanged phase behavior. Measure burst duration and arrival correlation. If the burst lasts longer than the cold path, reactive nodes can help after they become ready; they still do not save requests whose deadlines expire before then.
+This result is not a universal recommendation to keep seven groups warm. It assumes the worked case's token mix, per-group replay result, 80-rps burst, one-group failure promise, and unchanged phase behavior. Measure burst duration and arrival correlation. If the burst lasts longer than the cold path, reactive nodes can help after they become ready; they still do not save requests whose deadlines expire before then.
 
 ## Build a token-aware capacity control loop
 
 Separate model replica scaling from node provisioning. A model-aware controller should compute complete serving groups; a node autoscaler should supply machines for Pods the scheduler cannot place.
 
 1. **Measure admitted work before the GPU.** Export input-token arrival rate, a bounded output-token reservation or tested forecast, oldest queue age, predicted service-start time, retained and reserved KV tokens, cancellations, and rejections. An engine's waiting-request count is useful evidence but is not a token-weighted capacity estimate.
-2. **Calculate complete groups.** Use the greater of input and output phase demand, add the declared failure spare, and apply scale-up stabilization appropriate to the SLO. When one TP4 Pod is a group, a controller can set Deployment replicas. If four Pods form a group, use a group-aware controller; a vanilla HPA replica count cannot guarantee four-rank atomicity.
+2. **Calculate complete groups.** Use the greater of input and output phase demand, add the declared failure spare, and apply scale-up stabilization appropriate to the SLO. When one TP4 Pod is a group, a controller can set Deployment replicas. If four Pods form a group, use a group-aware controller; a vanilla Horizontal Pod Autoscaler (HPA) replica count cannot guarantee four-rank atomicity.
 3. **Provision only compatible nodes.** Constrain the Karpenter NodePool to validated instance types, zones, capacity types, architecture, and permanent GPU taint. The provider-specific NodeClass must also select the correct image, storage, network, and bootstrap path.
 4. **Hold new nodes behind a startup taint.** Declare the temporary taint in the NodePool, and assign one controller to remove it only after driver and device-plugin validation, the expected allocatable resources, a runtime device smoke test, and any required artifact prefetch succeed. Workload Pods tolerate the permanent GPU taint but not the startup taint.
 5. **Route only ready groups.** A startup probe protects long initialization. Readiness stays false until all ranks, model shards, communicators, and warm-up checks pass, so the Service cannot count a cold Pod as capacity.

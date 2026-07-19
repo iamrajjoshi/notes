@@ -1,11 +1,9 @@
 ---
 title: Context architecture and AGENTS.md
-shortTitle: Context architecture
 description: Build a context hierarchy that keeps durable instructions, current task facts, retrieved evidence, and tool results distinct and attributable.
-collection: harness-engineering
 slug: context-architecture-and-agents-md
 order: 3
-number: HE3
+identifier: HE3
 duration: 120 min
 difficulty: Core
 tags:
@@ -19,22 +17,13 @@ tags:
 
 Context is a working set, not a warehouse. Keep the rules that govern a decision close, retrieve facts when needed, label their origin, and discard detail that no longer changes the next action.
 
-## Questions this note answers
-
-- Separate stable instructions from task input and untrusted evidence
-- Apply AGENTS.md scope and precedence without duplicating the whole repository manual
-- Budget context by decision value instead of file size alone
-- Assemble one model call from discovered, authorized, fresh evidence
-- Design compaction and retrieval records with provenance and freshness
-- Know where instructions stop and runtime authorization begins
-
 ## Do not mix authority with evidence
 
 Stable policy says how the runner must behave. The task contract says what this run should achieve. Retrieved files and web pages are evidence about the work, while tool results report what just happened. Keeping those classes separate lets the harness assign trust, lifetime, and precedence deliberately.
 
 External text can contain instructions that conflict with policy. It remains data even when it looks like a system message. Attach source, retrieval time, scope, and trust level to each context item; then render untrusted material inside a clear data boundary and never let it silently redefine tool permissions.
 
-> **Context review.** For every item, ask which future decision it can change. If there is no concrete answer, it is consuming attention without helping the run.
+> **Decision value.** For every item, ask which future decision it can change. If there is no concrete answer, it is consuming attention without helping the run.
 
 ## Give each context class a source and lifetime
 
@@ -114,6 +103,56 @@ Now consider the failure mode. A similarity-only retriever ranks the old summary
 
 Record the ledger with the run: candidate identifiers, access decision, revision, estimated and actual token count, selection reason, prompt position, and the later decision that consumed each item. That turns “bad context” into testable claims such as `required_local_policy_missing`, `stale_source_selected`, or `budget_displaced_failure_evidence`.
 
+## Load skill instructions without expanding authority
+
+Tools and skills solve different problems. A tool definition describes an operation the host may execute. A skill supplies task-specific instructions and may point to scripts, references, or assets. Loading a skill can change what the model knows to ask for; it must not add an executable, writable path, credential, or network destination to the host's grant.
+
+The Agent Skills format uses progressive loading. A client can keep each skill's small name and description in the startup catalog, load the full `SKILL.md` only when the task matches, and read referenced resources only when those instructions require them. Record the selected skill name, source, version or digest, selection reason, and token cost. Otherwise, a later trace cannot tell whether a behavior change came from the model, a newly loaded instruction, or a different reference file.
+
+The **Model Context Protocol (MCP)** is a client-server protocol for discovering context and actions through common method contracts. This note needs only its tool-catalog behavior; [HE4](04-tools-environments-and-sandboxes.md#mcp-standardizes-discovery-and-calls-not-trust) introduces lifecycle negotiation, feature families, transports, calls, and their security boundary.
+
+MCP tool discovery has a separate path. A server that exposes tools declares that capability, and `tools/list` returns names, descriptions, input schemas, and optional output schemas or annotations. Treat a remote catalog as discovered data. The host manifest still decides which server and tool names may enter a run, while the executor applies identity, argument, filesystem, network, and approval policy. MCP annotations such as read-only or idempotent are hints from the server, not authorization evidence.
+
+Suppose a parser-repair profile keeps narrow repository reads resident and loads language-specific instructions only when discovery finds matching files:
+
+```yaml
+agent_profile: parser-repair
+
+resident_tools:
+  - name: read_file
+    grant: repository:read
+  - name: run_focused_test
+    grant: sandbox:test
+
+skill_catalog:
+  - name: python-api-migration
+    metadata_source: skills/python-api-migration/SKILL.md
+    metadata_digest: sha256:skill-metadata
+  - name: pdf-extraction
+    metadata_source: skills/pdf-extraction/SKILL.md
+    metadata_digest: sha256:other-metadata
+
+activated_skills:
+  - name: python-api-migration
+    instructions_digest: sha256:skill-instructions
+    reason: target package contains a versioned Python API
+    input_tokens: 860
+
+mcp_catalog:
+  server: repository-index
+  protocol: 2025-11-25
+  catalog_digest: sha256:tool-catalog
+  allowed_tools: [find_symbol]
+
+executor_grant:
+  writable_paths: [packages/parser]
+  outbound_hosts: []
+```
+
+Only the selected skill instructions and allowed tool schemas enter the model input. `executor_grant` stays in host state. The unrelated PDF skill contributes only its small catalog metadata, and a script named by the selected skill still needs an allowed execution tool and sandbox policy before it can run.
+
+Catalogs can change during a long run. If an MCP server emits a tool-list change, fetch and validate the new catalog, record its new digest, and apply the host allowlist again. Do not expose a newly discovered write tool to an existing run merely because the server announced it. The same rule applies when a skill directory changes: pin or reload it through an explicit run transition instead of silently changing the instructions beneath a saved checkpoint.
+
 ## AGENTS.md forms a scoped instruction chain
 
 Codex builds this chain once when a run starts. At global scope it prefers `AGENTS.override.md` over `AGENTS.md`. In a project, it walks from the project root to the current working directory and chooses at most one instruction file per directory, checking the override name before the regular name and any configured fallbacks. It merges root first, so a closer file appears later and can replace broader guidance. The default combined project-instruction limit is 32 KiB; oversized guidance may never enter context.
@@ -164,9 +203,9 @@ Budget both tokens and attention. Retrieve a narrow section before loading a who
 
 > **Toy assembler.** Suppose a run records token use by context class, loads one task-specific instruction file, and gives the model file references instead of copying every artifact into the prompt. The trace can then show whether policy, evidence, history, or tool output displaced the missing fact.
 
-### Code walk: keep ambient context separate from capabilities
+### Worked boundary: keep ambient context separate from capabilities
 
-Write two records for a toy run. The first describes what the model may read; the second describes what the host may execute:
+A toy run can keep two separate records. The first describes what the model may read; the second describes what the host may execute:
 
 ```yaml
 model_input:
@@ -185,7 +224,7 @@ capability_grant:
   outbound_hosts: []
 ```
 
-Pass `model_input` to a scripted model, but keep `capability_grant` in host code. The page text may cause a bad proposal; it must not add a tool, tenant, or network destination. The hostile tool result in [minimal-harness.mjs](examples/minimal-harness.mjs) demonstrates the same boundary: inspect `authorize` and confirm that retrieved text never changes the task's tenant grant.
+Only `model_input` enters the scripted model's context; `capability_grant` stays in host code. The page text may cause a bad proposal, but it cannot add a tool, tenant, or network destination. The hostile tool result in [minimal-harness.mjs](examples/minimal-harness.mjs) demonstrates the same boundary: `authorize` never derives the task's tenant grant from retrieved text.
 
 ## Measure context misses and stale decisions separately
 
@@ -202,6 +241,7 @@ Context quality depends on selection, provenance, precedence, and freshness, not
 - Classify each item as policy, task contract, retrieved evidence, tool observation, decision, or working note.
 - Attach source, scope, observed time, artifact version, trust level, and refresh rule where those facts affect use.
 - Keep a retrieval ledger that shows discovered candidates, access decisions, freshness checks, token cost, selection reasons, and prompt position.
+- Keep base tools, selected skills, remote tool catalogs, and executor grants in separate records. Loading instructions may guide a proposal but cannot widen authority.
 - Resolve `AGENTS.md` from broad scope toward the working directory; a narrower authorized rule can replace a broader one.
 - Remember that Codex discovers the chain at run start and applies a size limit; restart after editing instruction files and keep policy enforcement outside the prompt.
 - Treat issue text, web pages, and tool output as evidence that cannot grant permissions or override repository policy.
@@ -212,5 +252,8 @@ Context quality depends on selection, provenance, precedence, and freshness, not
 
 - [OpenAI Codex: AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
 - [AGENTS.md open format](https://agents.md/)
+- [Agent Skills specification](https://agentskills.io/specification)
+- [Adding Agent Skills support](https://agentskills.io/client-implementation/adding-skills-support)
+- [MCP 2025-11-25: Tool discovery and schemas](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
 - [Anthropic: Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
 - [Minimal harness](examples/minimal-harness.mjs): Follow an untrusted observation into a denied cross-tenant write proposal.

@@ -1,11 +1,9 @@
 ---
 title: Durable state, continuity, and handoffs
-shortTitle: State and handoffs
 description: Preserve progress across turns, workers, crashes, and ownership changes without replaying side effects or trusting an opaque transcript.
-collection: harness-engineering
 slug: durable-state-continuity-and-handoffs
 order: 5
-number: HE5
+identifier: HE5
 duration: 120 min
 difficulty: Advanced
 tags:
@@ -19,12 +17,17 @@ tags:
 
 Continuity comes from explicit state and receipts, not a long transcript. Checkpoint decisions at stable boundaries, give every external effect an identity, and hand off a compact work package that another executor can verify.
 
-## Questions this note answers
+## Learn the ownership vocabulary before recovering a run
 
-- Separate conversation history, working state, checkpoints, artifacts, and external effects
-- Design a typed handoff with ownership and evidence
-- Explain replay, step boundaries, versioning, and idempotency in durable execution
-- Recover an interrupted run without silently repeating completed work
+| Term                       | Meaning in this note                                                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Checkpoint                 | A durable, versioned record of stable workflow progress and the next safe action. It is not the worker's live memory or a copy of every artifact.                |
+| Lease                      | Time-bounded permission for one worker to act as the current owner. Expiry allows takeover but does not prove the old worker stopped.                            |
+| Ownership or fencing epoch | A monotonically increasing token issued with ownership. Durable writes reject an older epoch so a paused former owner cannot resume successfully after takeover. |
+| Compare-and-set            | An update that succeeds only if the stored version still equals the version the caller observed; otherwise it reports a conflict.                                |
+| Reconciliation             | A read from the authoritative system that determines whether an uncertain external effect committed before any retry.                                            |
+
+For the general distributed-systems mechanics, see [leases and fencing tokens](../06-distributed-systems/04-multicast-election-and-distributed-locks.md#finish-authority-with-a-lease-and-fencing-token) and [version-checked optimistic control](../06-distributed-systems/07-replication-consistency-and-transactions.md#compare-locking-optimism-and-versions). This note applies them to agent-run continuity.
 
 ## Store facts according to their lifetime and authority
 
@@ -33,6 +36,21 @@ Conversation history records what was said, but it is a poor database for comple
 Link these layers with stable identifiers and hashes. A checkpoint should say which artifact version it reviewed and which effect receipt it observed. On resume, reconcile those references before taking another action; a stale summary must not overrule current repository or service state.
 
 > **Toy storage split.** Keep model messages in the run record, resumable phase data in a checkpoint, and file bytes in an artifact store. A checkpoint points to an artifact digest; it doesn't copy the whole file or pretend that conversation history owns it.
+
+### Put a disposable cache in front of durable artifacts
+
+A session filesystem can present ordinary paths while storing committed bytes in a remote artifact store. The local disk is a cache and staging area, not the authority. A replacement worker should be able to open the same artifact from its digest even when it starts on another machine with an empty cache.
+
+One safe write path has four transitions:
+
+1. Write a temporary local file and compute its content digest.
+2. Upload the immutable object under that digest, then verify the store's receipt or returned version.
+3. Publish a small manifest that maps the session path to the digest through a conditional update.
+4. Save the manifest version, artifact digest, and upload receipt in the checkpoint.
+
+If the worker dies before step 2, the local file was never durable. A death after step 2 but before step 3 may leave an unreferenced object that garbage collection can remove after a safety interval. A death after step 3 can recover from the manifest even when the checkpoint is stale; the replacement reconciles the manifest version before it writes another path mapping.
+
+Content-addressed objects make repeated uploads harmless when the bytes match, but mutable path names still need compare-and-set or one declared writer. Cache eviction should change latency, not visible content. Track cache hit rate, downloaded bytes, upload and manifest latency, digest failures, unreferenced objects, and recovery reads separately so a warm cache cannot hide a broken remote store.
 
 ## Persist a boundary another process can verify
 
@@ -113,19 +131,64 @@ Recovery semantics have limits. A completed step can be reused, but a step inter
 
 > **Toy durable runner.** A database stores checkpoints and operation receipts, a lease assigns temporary ownership, and a queue may wake a worker. Checkpoints, delivery, leases, and effect records answer different recovery questions; none makes an external write safe to repeat by itself.
 
-### Code walk: treat workflow code as persisted state
+### Queueing, waiting, and watchdogs preserve different facts
 
-Open [durable-harness.mjs](examples/durable-harness.mjs) and inspect the five table definitions before reading the worker path. `run_checkpoints` stores phase and version, `leases` stores the current fencing epoch, and `operations` stores the stable effect identity beside its input digest and result.
+Durable systems often put several control loops around the workflow history. They should not share one vague “recovery” label:
 
-Trace `applyBusinessEffect` next. It commits the business change and operation record in one SQLite transaction, then the demo can exit before the checkpoint advances. `reconcileAndAdvance` reads the operation, checks its digest, and advances only when both the checkpoint version and lease epoch still match. Mark which facts survive a process crash and which exist only in local variables.
+| Mechanism                   | State it preserves or observes                                                                            | What it does not prove                                                  |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Durable queue               | Submitted work, admission order, concurrency, and rate limits                                             | That a dequeued workflow completed or its external effect committed     |
+| Queue partition or claim    | Which worker may pull one slice of queued work for a bounded lease                                        | Exclusive ownership after the claim expires                             |
+| Completed step record       | The saved input, output, and position of one finished workflow operation                                  | The result of a call that crashed before its completion record          |
+| Durable sleep or event wait | A wake time or awaited event that survives process replacement                                            | That a live worker or dependency will be healthy at wake-up             |
+| Process watchdog            | A worker or event loop stopped making local progress                                                      | Whether the workflow's last external call committed                     |
+| Orphan recovery scan        | Persisted work has no current executor and may need another recovery attempt                              | That retrying an uncertain effect is safe                               |
+| Graceful worker drain       | New claims stop while active work reaches a recorded boundary or loses its lease after a bounded deadline | That already orphaned work or an uncertain external effect is resolved  |
+| Retention cleanup           | Completed history meets a written deletion policy                                                         | That old history is no longer needed for deduplication or investigation |
 
-Now imagine changing a saved phase name, removing a checkpoint field, or reordering two externally visible steps while old runs remain active. For each edit, decide whether old state still has one unambiguous next action. If not, keep the old worker code available or write a tested state migration; deploying new code doesn't rewrite saved history.
+Suppose an export workflow leaves a durable queue, completes `reserve_export`, and stores a wake time for a one-hour supplier window. Its worker exits during that wait. The queue record need not be recreated, and a watchdog need not rerun the reservation. A replacement reads the workflow history, observes the completed step and pending wake time, then waits or resumes from that boundary. If the process died inside a supplier call whose result was never recorded, orphan recovery must reconcile that operation instead of treating it like the completed reservation.
 
-### Code walk: follow recovery through the worker
+During a planned shutdown, mark the worker unavailable for new claims first, then give active work a bounded interval to publish its next durable boundary. Do not acknowledge or delete an incomplete queue item merely to make the process exit cleanly. When the deadline expires, the lease and stored history—not process memory—must let another worker distinguish a completed step, a safe retry, and an uncertain effect that requires reconciliation.
 
-Run `node --test tests/durable-harness.test.mjs` and classify its four cases. One deduplicates a repeated effect, one rejects an expired lease, one reconciles after a process dies before checkpoint, and one rejects a stale worker after a lease race. For every case, record the durable fact that permits progress or forces a stop.
+### Worked storage boundary: workflow code is part of persisted state
 
-Add a fifth case on paper: the effect belongs to an external API that offers neither an idempotency key nor a lookup by operation ID. The replacement worker can't prove committed or absent, so the correct result is `needs_operator`, not another write.
+The five table definitions in [durable-harness.mjs](examples/durable-harness.mjs) make the storage boundary visible. `run_checkpoints` stores phase and version, `leases` stores the current fencing epoch, and `operations` stores the stable effect identity beside its input digest and result.
+
+`applyBusinessEffect` commits the business change and operation record in one SQLite transaction, then the demo can exit before the checkpoint advances. `reconcileAndAdvance` reads the operation, checks its digest, and advances only when both the checkpoint version and lease epoch still match. The database rows survive a process crash; local variables do not.
+
+Changing a saved phase name, removing a checkpoint field, or reordering externally visible steps can leave old state without one unambiguous next action. In that case, keep the old worker code available or provide a tested state migration. Deploying new code does not rewrite saved history.
+
+#### A recorded step sequence constrains an upgrade
+
+DBOS documents a change in which steps run, or the order in which they run, as a breaking workflow change. Assume each called function below is registered with `@DBOS.step()`. The history may already contain `validate_export` followed by `write_object`:
+
+```python
+@DBOS.workflow()
+def build_export(export_id: str) -> None:
+    validate_export(export_id)
+    write_object(export_id)
+```
+
+Inserting `redact_export` between them without an upgrade rule gives an old history and new code different meanings for the same position. One patch path keeps both branches explicit:
+
+```python
+@DBOS.workflow()
+def build_export(export_id: str) -> None:
+    validate_export(export_id)
+    if DBOS.patch("add-redaction-v2"):
+        redact_export(export_id)
+    write_object(export_id)
+```
+
+New workflows record the patch marker and run the new step; an old workflow that already crossed that history position follows the old branch. Keep the patch until old histories have drained, deprecate it through the workflow API, and remove it only after no resumable run depends on that branch. Application versioning is the other option: send new work to the new version while workers with the old code finish old histories.
+
+The step sequence is only part of compatibility. Serialized arguments and results are persisted data, so renaming a step, changing a parameter's meaning, removing a field, or changing an output shape can strand an old execution even when the source still type-checks. Version those schemas or provide a tested adapter. A deployment that starts successfully says nothing about whether yesterday's checkpoint can resume.
+
+### Executable recovery cases
+
+`node --test tests/durable-harness.test.mjs` runs four cases. One deduplicates a repeated effect, one rejects an expired lease, one reconciles after a process dies before checkpoint, and one rejects a stale worker after a lease race. Each result follows from a durable operation record, lease epoch, or checkpoint version rather than a worker's local memory.
+
+A fifth boundary is an external API that offers neither an idempotency key nor a lookup by operation ID. A replacement worker cannot prove committed or absent, so the correct result is `needs_operator`, not another write.
 
 ## Watch ownership, replay, and stuck progress as different signals
 
@@ -140,19 +203,23 @@ Keep a runbook for orphan detection and recovery. It should state how long owner
 Durable state must let a different process determine what happened and what remains safe to do. Save stable progress, artifact identities, ownership, and external receipts outside the conversation so recovery does not guess from prose.
 
 - Keep conversation history, working notes, checkpoints, artifacts, and external systems as distinct stores with different authority.
+- Keep remote artifact bytes and manifests authoritative; a local session filesystem cache may disappear without changing committed content.
 - Include task identity, schema version, phase, owner epoch, artifact digests, completed steps, pending approvals, budgets, and next safe action in a checkpoint.
 - Use atomic writes or compare-and-set updates so two workers cannot advance the same checkpoint silently.
 - After a crash around an external effect, reconcile its operation ID with authoritative state before issuing another write.
 - In the public SQLite case, only the current lease epoch and expected checkpoint version may advance a run; stale workers return a recorded conflict.
 - Make a handoff name the new owner, whether the old owner must stop, the accepted evidence, unresolved risks, and the bounded next action.
 - Put nondeterministic reads and effects inside recorded steps because workflow code outside them may run again during replay.
+- Treat step order and persisted input or output schemas as compatibility boundaries, and separate queue delivery, durable waits, watchdogs, orphan recovery, graceful drain, and retention.
 - Monitor checkpoint age, ownership conflicts, uncertain effects, replay counts, recovery attempts, and cancellation latency separately.
 
 ## References
 
 - [DBOS: Workflows](https://docs.dbos.dev/python/tutorials/workflow-tutorial)
+- [DBOS: Upgrading workflow code](https://docs.dbos.dev/python/tutorials/upgrading-workflows)
 - [DBOS Python programming guide](https://docs.dbos.dev/python/programming-guide): Defines database-backed workflow and step state, including the local SQLite default and production PostgreSQL recommendation.
 - [DBOS: Queues](https://docs.dbos.dev/python/reference/queues)
+- [DBOS methods: durable sleep, waits, events, and patch markers](https://docs.dbos.dev/python/reference/contexts)
 - [SQLite: Transactions](https://www.sqlite.org/lang_transaction.html)
 - [SQLite: Atomic commit](https://www.sqlite.org/atomiccommit.html)
 - [SQLite: Write-ahead logging](https://www.sqlite.org/wal.html)

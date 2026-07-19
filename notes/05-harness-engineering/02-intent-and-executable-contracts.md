@@ -1,11 +1,9 @@
 ---
 title: Intent and executable contracts
-shortTitle: Executable intent
 description: Translate a human request into testable outcomes, typed actions, evidence requirements, and stop conditions before the run spends authority.
-collection: harness-engineering
 slug: intent-and-executable-contracts
 order: 2
-number: HE2
+identifier: HE2
 duration: 105 min
 difficulty: Core
 tags:
@@ -17,14 +15,7 @@ tags:
 
 ## Working model
 
-A useful task contract is a small test oracle written before the work starts. It states what may change, what must stay true, which evidence counts, and when the runner must stop or ask.
-
-## Questions this note answers
-
-- Rewrite an ambiguous goal as observable acceptance criteria
-- Specify preconditions, postconditions, invariants, and non-goals
-- Design a typed tool contract with explicit error and side-effect semantics
-- Define success, escalation, and stop rules that code can check
+A useful task contract is a small test oracle written before the work starts. An **oracle** is the rule that turns an observation into a pass, failure, or unresolved result. The contract states what may change, what must stay true, which evidence counts, and when the runner must stop or ask.
 
 ## Make success observable before giving the agent tools
 
@@ -32,7 +23,7 @@ Requests such as "make onboarding better" hide several decisions: who the user i
 
 Acceptance criteria should be observable by a reviewer or program. "The page is fast" is weak; "the measured route stays under the agreed latency threshold in the named test setup" gives the run a check. Keep the threshold and setup in task data so they can be reviewed and versioned rather than buried in a system prompt.
 
-> **Contract test.** If two reviewers could accept different artifacts while honestly following the criterion, the criterion still contains a hidden choice.
+> **Contract ambiguity.** If two reviewers could accept different artifacts while honestly following the criterion, the criterion still contains a hidden choice.
 
 ## Separate the goal from the rules that guard it
 
@@ -50,7 +41,7 @@ Ownership matters when the request leaves a choice unresolved. The user owns pro
 
 JSON Schema can reject a missing field or an invalid enum before execution. It cannot explain whether a call is read-only, which identity performs it, how long it may run, whether a retry is safe, or what partial success looks like. Put those facts in tool metadata and enforcement code.
 
-Useful contracts state preconditions, result shape, error classes, timeout behavior, side effects, idempotency, and approval needs. Validate returned data too. A tool that claims success with an empty artifact or changes a resource after returning an error can mislead every later step even when its input schema is perfect.
+Useful contracts state preconditions, result shape, error classes, timeout behavior, side effects, idempotency, and approval needs. **Idempotency** means that retrying the same logical operation does not repeat its effect; it requires a stable operation identity and an enforced result-reuse rule, not merely equal arguments. Validate returned data too. A tool that claims success with an empty artifact or changes a resource after returning an error can mislead every later step even when its input schema is perfect. [HE4](04-tools-environments-and-sandboxes.md#a-retry-is-safe-only-when-the-effect-contract-says-so) develops the retry and reconciliation boundary.
 
 _Operational metadata gives the runner facts that a parameter schema alone cannot express._
 
@@ -64,7 +55,7 @@ timeout: 15s
 postcondition: returned_version > prior_version
 ```
 
-### Code walk: follow tool metadata into approval enforcement
+### Worked trace: follow tool metadata into approval enforcement
 
 Suppose a host registers the `update_record` contract above. When the model proposes that tool, the host validates its arguments and builds an approval record before execution:
 
@@ -78,7 +69,36 @@ Suppose a host registers the `update_record` contract above. When the model prop
 }
 ```
 
-The host stores that record and returns `awaiting_approval`; it hasn't run the tool. On resume, the decision must name `call-17`, match the arguments digest, and arrive before expiry. A missing, denied, stale, or mismatched decision becomes a rejected tool result. Test those four cases plus the accepted path, and assert that only the accepted path calls the executor.
+The host stores that record and returns `awaiting_approval`; it hasn't run the tool. On resume, the decision must name `call-17`, match the arguments digest, and arrive before expiry. A missing, denied, stale, or mismatched decision becomes a rejected tool result. A useful test matrix covers those four cases plus the accepted path and asserts that only the accepted path calls the executor.
+
+Registration should reject an ambiguous contract before a run starts. If two modules register `update_record` with different schemas, side-effect classes, or approval behavior, the host fails registration instead of letting import order choose one. A tool that always requires consent also needs a deterministic, human-readable preview renderer. Raw JSON remains available for inspection, but it should not be the only explanation of a deletion, payment, permission change, or other consequential effect.
+
+The host computes an effective approval mode from policy rather than trusting one metadata field. Imagine that the agent profile requires approval for every write, while `read_record` asks for none and `delete_record` declares `always`. The read remains ungated only if the surrounding policy permits it; the delete cannot weaken the profile's rule. A tool declaration may make a call stricter, while only an authorized policy change may make it looser.
+
+#### Gather one turn's gated calls into one decision bundle
+
+A model can propose several tool calls in one turn. Interrupting after the first call and forgetting the others changes the proposed turn, while approving a prose summary without call identities leaves the resume path ambiguous. Validate every proposal first, create one immutable record per gated call, then persist one bundle that contains their exact IDs and digests:
+
+```json
+{
+  "approvalSetId": "approval-9",
+  "calls": [
+    {
+      "callId": "call-17",
+      "argumentsDigest": "sha256:update-input",
+      "preview": "Set record 42 from version 8 to version 9"
+    },
+    {
+      "callId": "call-18",
+      "argumentsDigest": "sha256:publish-input",
+      "preview": "Publish notice 73 to the status page"
+    }
+  ],
+  "expiresAt": "2026-07-18T18:00:00Z"
+}
+```
+
+The runner emits one interrupt for `approval-9`. A resumed decision bundle must name that approval set, contain one decision for every stored call, contain no duplicate or unknown call ID, match every digest, and remain within its expiry. Validate the whole bundle before any executor starts. If the bundle is malformed, reject every gated call; if it is valid, execute only calls marked approved and return explicit rejected results for the rest. Persist those per-call decisions so a process restart replays the same control result instead of asking again or guessing from conversation text.
 
 ## Compile a flaky-test request into executable checks
 
@@ -122,6 +142,7 @@ A task contract turns a request into a decision procedure before the run receive
 - Record the goal, scoped inputs, non-goals, preconditions, postconditions, invariants, and escalation rule.
 - Make every acceptance check observable against a named artifact, environment, or external resource version.
 - Treat a tool schema as argument validation only; identity, side effects, retry rules, deadlines, and partial success need separate policy.
+- Reject conflicting registrations, derive approval from host policy, and bind a multi-call decision bundle to exact call IDs and argument digests before any executor runs.
 - Preserve the original acceptance rule when a check fails. Repair the candidate or report the failure instead of weakening the check.
 - Store check states explicitly: pending, passed, failed, unavailable, or skipped with recorded authorization.
 - Keep termination reason separate from result status so cancellation, budget exhaustion, and success cannot be confused.

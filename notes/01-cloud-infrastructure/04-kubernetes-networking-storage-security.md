@@ -1,11 +1,9 @@
 ---
 title: Kubernetes networking, storage, and security
-shortTitle: Network and storage
 description: Trace packets through Services and gateways, bind durable volumes with CSI, and layer workload security controls.
-collection: cloud-infrastructure
 slug: kubernetes-networking-storage-security
 order: 4
-number: CI4
+identifier: CI4
 duration: 125 min
 difficulty: Core
 tags:
@@ -19,13 +17,6 @@ tags:
 ## Working model
 
 Kubernetes names intent while plugins program data paths. A Service, PVC, or NetworkPolicy matters only when its controller and provider turn that object into packets, mounts, or enforcement.
-
-## Questions this note answers
-
-- Trace Pod-to-Pod and external-to-Pod traffic through cluster abstractions
-- Distinguish CNI routing, Service proxying, DNS, and L7 routing
-- Explain StorageClass, PV, PVC, CSI, access mode, and topology binding
-- Layer RBAC, Pod Security Admission, workload identity, and NetworkPolicy
 
 ## Start with the connection the application wants
 
@@ -72,7 +63,7 @@ Build an inventory for the fictional bookshop cluster from installed Kubernetes 
 | CoreDNS and NodeLocal DNSCache | CoreDNS watches Service discovery data                                     | A local cache answers or forwards the Pod's DNS query                       |
 | Amazon EBS CSI driver          | Provisions and attaches a volume through AWS APIs                          | Registers the CSI node service and mounts the attached device               |
 
-Now compare two failures. A scheduled Pod stuck while its sandbox lacks an address points toward CNI address capacity before Service routing matters. A Pod waiting on `MountVolume` has passed scheduling and network admission; follow PVC binding, the CSI controller operation, EBS attachment, and the node plugin. The object timeline narrows the owner.
+Now compare two failures. A scheduled Pod stuck while its sandbox lacks an address points toward CNI address capacity before Service routing matters. A Pod waiting on `MountVolume` has passed API admission and scheduling, but its sandbox networking may still be incomplete; follow PVC binding, the CSI controller operation, EBS attachment, and the node plugin. The object timeline narrows the owner.
 
 _For each component, name the watched object, controller action, node process, and resulting data-path change._
 
@@ -95,7 +86,26 @@ A PersistentVolumeClaim (PVC) states capacity, access mode, and StorageClass nee
 
 A volume outlives a Pod only according to its reclaim policy and backend durability. Access mode describes attach or mount capability, not application-level concurrency safety. Backups and restore drills remain separate from persistence.
 
-> **Fictional case.** The bookshop's `orders-db` claim uses a `gp3` EBS StorageClass with `WaitForFirstConsumer`. The claim is a teaching example, not a recommendation to run PostgreSQL in Kubernetes; the same application could instead use RDS and avoid a Pod-mounted database volume.
+> **Fictional case.** The bookshop's `orders-db` claim uses a `gp3` EBS StorageClass with `WaitForFirstConsumer` to expose the binding path. It is not a recommendation to run PostgreSQL in Kubernetes; the same application could instead use RDS and avoid a Pod-mounted database volume.
+
+### Advanced storage-driver case: an object-backed virtual block device
+
+The ordinary PVC, PV, and CSI path above is enough for a first reading. This case examines a driver whose block interface is assembled from object storage and node-local cache. Return to it after [LL4: Linux storage and I/O](../02-low-level-infrastructure/04-storage-and-io.md) and [CI14: Storage, backups, and disaster recovery](14-storage-backup-and-disaster-recovery.md) if flush, fencing, cache, and recovery contracts are unfamiliar.
+
+CSI standardizes calls between Kubernetes and a storage driver; it does not require the driver to map a volume to a provider block disk. A driver commonly has a controller component for operations such as create, delete, attach, and detach, plus a per-node component that registers with kubelet and handles stage and publish calls. The backend can therefore have a different durability and caching model from EBS, provided the driver states and implements that model.
+
+Suppose a toy driver exposes `archive-scratch` as a block device. Its authoritative chunks and volume manifest live in object storage, while a privileged node plugin keeps a disposable cache on local NVMe. After the external provisioner asks the controller to create a logical volume, the resulting PV stores an opaque volume handle. Once the scheduler chooses a node, kubelet asks that node's driver to stage the volume, the driver reconstructs or opens the virtual device, and kubelet mounts the filesystem into the Pod.
+
+```text
+PVC -> external provisioner -> CSI controller -> logical volume handle
+Pod scheduled -> kubelet -> CSI node plugin -> virtual block device -> filesystem mount
+read miss -> node cache miss -> object chunk fetch
+acknowledged write -> durable chunk upload -> committed volume manifest
+```
+
+The final line is the important contract. If the driver acknowledges a flush before the new chunks and manifest are durable, losing the node can lose acknowledged data. If it waits for remote commit, node loss should discard only cache state, although recovery may be slow and object-store unavailability can stop cache misses or new commits. A stale node must not publish an older manifest after another node takes ownership, so multi-attach policy, leases or fencing, cache invalidation, and mount recovery belong in the driver design.
+
+Kubernetes can report that the PVC is bound and the volume is mounted; those facts do not prove the driver's flush, snapshot, consistency, or recovery semantics. Read the exact driver contract before placing a database or another write-sensitive filesystem on it. Treat local cache capacity and hit rate as performance signals, remote manifest commit as durability evidence, and a restore test as separate proof.
 
 ## Security needs independent gates
 
@@ -132,6 +142,7 @@ Kubernetes networking, storage, and security objects are requests to controllers
 - Trace service traffic in order: DNS → Service ports and selector → EndpointSlices → network policy → route or proxy rules → target listener. No endpoints usually means selector or readiness, not packet routing.
 - L4 load balancing chooses with connection metadata. L7 proxying terminates protocol state and adds a separate upstream connection, HTTP routing, timeouts, buffering, and retry behavior.
 - A PVC requests capacity, access mode, and a StorageClass; a provisioner supplies a PV; CSI node components attach and mount it. WaitForFirstConsumer helps align zone-bound storage with Pod placement.
+- CSI does not dictate the storage backend. For an object-backed virtual block device, distinguish disposable node cache from durable chunks and the committed volume manifest, then verify flush, fencing, and recovery behavior.
 - Persistence does not imply backup, restore, or safe concurrent access. Reclaim policy and backend durability must match the application's recovery plan.
 - RBAC, workload identity, Pod Security Admission, secret controls, and NetworkPolicy guard different operations. Passing one gate says nothing about the others.
 - For an external failure, inspect Gateway or route attachment before the cloud load balancer. For a volume failure, follow PVC → StorageClass → PV → scheduling → attach → mount events.
@@ -142,6 +153,8 @@ Kubernetes networking, storage, and security objects are requests to controllers
 - [DNS for Services and Pods](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)
 - [Gateway API concepts](https://gateway-api.sigs.k8s.io/docs/concepts/api-overview/)
 - [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
+- [Kubernetes volumes and CSI operations](https://kubernetes.io/docs/concepts/storage/volumes/#csi)
+- [Deploying a CSI driver: controller and node components](https://kubernetes-csi.github.io/docs/deploying.html)
 - [Using RBAC authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
 - [Kubernetes NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
 - [Kubernetes Service debugging](https://kubernetes.io/docs/tasks/debug/debug-application/debug-service/)

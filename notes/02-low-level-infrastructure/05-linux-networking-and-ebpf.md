@@ -1,11 +1,9 @@
 ---
 title: Linux networking, Netfilter, and eBPF
-shortTitle: Packet path
 description: Walk a packet through namespaces, virtual links, routing, connection tracking, filtering, and application-layer proxies.
-collection: low-level-infrastructure
 slug: linux-networking-and-ebpf
 order: 5
-number: LL5
+identifier: LL5
 duration: 180 min
 difficulty: Core
 tags:
@@ -18,16 +16,6 @@ tags:
 ## Working model
 
 A packet never travels through a generic networking box. It crosses named hooks and routing decisions inside one or more network namespaces; each data-plane implementation chooses which of those points to program.
-
-## Questions this note answers
-
-- Trace a client request through the Domain Name System (DNS), a socket, Transmission Control Protocol (TCP) or QUIC, Transport Layer Security (TLS), Internet Protocol (IP) routing, and a link
-- Follow TCP setup, sequence and acknowledgment state, retransmission, flow control, congestion control, and close
-- Diagnose listener queues, ephemeral-port or Network Address Translation (NAT) exhaustion, and a Path Maximum Transmission Unit (MTU) Discovery black hole from read-only evidence
-- Connect network namespaces with virtual Ethernet (veth) pairs, bridges, and routes
-- Place Netfilter hooks and conntrack beneath nftables, legacy xtables, or the nf_tables iptables compatibility path
-- Distinguish transport-layer (Layer 4) connection handling from application-layer (Layer 7) protocol-aware routing
-- Trace an extended Berkeley Packet Filter (eBPF) object through loading, Compile Once Run Everywhere (CO-RE) relocation, verification, map creation, and attachment
 
 ## Start at the application socket
 
@@ -203,7 +191,9 @@ An L4 design can preserve one transport connection and often keep the original p
 
 Health checks also observe the layer they exercise. A TCP connect can prove that a port accepted a handshake while the HTTP handler returns errors; an HTTP check can pass while a specific tenant route fails. Match the check's namespace, address family, protocol, host header, and credentials to the failure under study.
 
-## An eBPF loader builds kernel objects before anything runs
+## Advanced: an eBPF loader builds kernel objects before anything runs
+
+The socket, route, TCP, namespace, queue, Netfilter, proxy, and load-balancing path above is the core networking lesson. The next sections add eBPF program loading, attachment, maps, verifier constraints, and version compatibility for readers who need programmable kernel hooks.
 
 Extended Berkeley Packet Filter (eBPF) lets an authorized user-space loader submit restricted programs that the kernel verifies and attaches to supported hooks. Networking programs can inspect, count, redirect, or reject traffic at points such as XDP, traffic control, sockets, and cgroups. Other eBPF program types observe tracing or security hooks. Maps hold shared state between programs or user space.
 

@@ -1,11 +1,9 @@
 ---
 title: PCIe assignment, GPUs, and nested virtualization
-shortTitle: Devices and nesting
 description: Follow DMA through an IOMMU, compare GPU-sharing boundaries, and reason about a guest hypervisor running another guest.
-collection: low-level-infrastructure
 slug: device-assignment-and-nested-virtualization
 order: 10
-number: LL10
+identifier: LL10
 duration: 140 min
 difficulty: Advanced
 tags:
@@ -19,13 +17,7 @@ tags:
 
 Device assignment gives a guest a shorter I/O path only after the host builds a DMA fence around it. Nested virtualization adds another manager of privileged CPU and memory state; neither technique removes the layers it asks hardware to accelerate.
 
-## Questions this note answers
-
-- Explain PCIe functions, BARs, DMA, IOMMU translation, and VFIO assignment
-- Contrast whole-device passthrough with SR-IOV virtual functions
-- Distinguish passthrough, mediated vGPU, time slicing, and MIG
-- Map L0, L1, and L2 roles in nested virtualization
-- Name the workload and feature checks required before claiming a nesting overhead
+This note contains two independent capstones after LL8. The first follows PCIe, IOMMU, VFIO, and GPU-sharing paths through [A shorter device path can still cross the wrong socket](#a-shorter-device-path-can-still-cross-the-wrong-socket). The second starts at [Nested virtualization adds an L1 hypervisor](#nested-virtualization-adds-an-l1-hypervisor) and follows the L0 → L1 → L2 path. Device assignment is not a prerequisite for nested virtualization, and nested virtualization is not a prerequisite for device assignment.
 
 ## A PCIe device moves data through queues and DMA
 

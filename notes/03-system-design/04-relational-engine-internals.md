@@ -1,11 +1,9 @@
 ---
 title: Relational Engine Internals and Online Schema Changes
-shortTitle: Relational engine internals
 description: Follow PostgreSQL and MySQL from connections through row versions, logs, cleanup, replication, and an online index build without confusing SQL syntax with the physical engine.
-collection: system-design
 slug: relational-engine-internals
 order: 4
-number: SD4
+identifier: SD4
 duration: 2.5 hours
 difficulty: Core
 tags:
@@ -24,19 +22,11 @@ tags:
 
 A relational database runs several coupled protocols behind one SQL statement: connection admission, concurrency control, crash recovery, replica catch-up, cleanup, and schema change. A design is safe only when each protocol has a capacity limit and observable state.
 
-## Questions this note answers
-
-- Explain why a PostgreSQL connection consumes a backend process and why a pool is an admission boundary
-- Separate MVCC visibility from WAL durability and checkpointing
-- Trace one PostgreSQL update through row versions, locks, WAL, crash recovery, and vacuum
-- Diagnose long snapshots, stale statistics, dead tuples, WAL retention, and replica lag as different problems
-- Calculate whether a returning replica can catch up while new writes continue
-- Contrast PostgreSQL heap storage with InnoDB clustered primary keys, undo history, redo, and the MySQL binary log
-- Trace `CREATE INDEX CONCURRENTLY` through two scans, catalog states, transaction waits, operating evidence, and failure cleanup
-
 ## Start where the schema note stopped
 
 [SD3](03-storage-data-modeling.md) chose PostgreSQL for an order authority because constraints and transactions express the product invariants. It also chose a tenant-and-time B-tree for a bounded recent-orders query. Those logical choices do not explain what happens after an application opens 8,000 connections, leaves a transaction open for four hours, loses a primary, or adds the index to a busy table.
+
+[DB4](../07-data-systems/04-transactions-concurrency-and-recovery.md) supplies the general transaction model. [DB5](../07-data-systems/05-postgresql-storage-query-and-mvcc-internals.md) through [DB7](../07-data-systems/07-mysql-and-innodb-internals.md) carry the PostgreSQL and MySQL paths further.
 
 This note opens that engine boundary. PostgreSQL is the main worked path; MySQL with InnoDB appears as a comparison because similar SQL can hide different physical reads and maintenance work. Exact behavior depends on the engine version and configuration, so production changes should start with the linked documentation and measured state from the actual system.
 
@@ -165,7 +155,7 @@ The usual recovery is to drop the invalid index and retry, or use the documented
 
 Before running the migration, inspect old transactions and snapshots, estimate both table scans, reserve I/O and WAL headroom, watch replica lag, and decide how an invalid artifact will be detected and removed. The command protects write availability, not workload latency or operator attention.
 
-## Running design checkpoint
+## Continuing worked case: relational engine and schema migration
 
 The PostgreSQL authority gets a bounded primary pool rather than one connection budget per application instance. If the representative create transaction occupies a backend for 20 ms at the 5,000-per-second peak, Little's Law predicts about 100 concurrent create transactions. The first pool cap is 200 primary connections, leaving room for status transitions, read-your-write requests, and variance without admitting thousands of backends. Ordinary reads use separately capped replica pools; pool wait must expire inside the API's one-second deadline and appears as its own metric.
 

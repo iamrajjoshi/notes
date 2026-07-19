@@ -1,11 +1,9 @@
 ---
 title: Infrastructure as code and GitOps
-shortTitle: IaC and GitOps
 description: Trace Terraform ownership and state recovery, then promote one immutable artifact through GitOps and controller evidence.
-collection: cloud-infrastructure
 slug: infrastructure-as-code-and-gitops
 order: 9
-number: CI9
+identifier: CI9
 duration: 125 min
 difficulty: Advanced
 tags:
@@ -19,17 +17,6 @@ tags:
 ## Working model
 
 Infrastructure delivery joins two ownership records. Terraform maps declared resource addresses to provider objects, while a GitOps controller compares versioned workload intent with live cluster objects. Neither record proves that the resulting service works.
-
-## Questions this note answers
-
-- Separate a Terraform provider, resource, module, backend, and state entry
-- Trace `init`, plan, apply, drift, import, replacement, and state recovery without treating them as one operation
-- Protect state and saved plans as production data
-- Promote one immutable artifact through environments with separately owned identities and state
-- Build and review a release candidate from a pinned source revision, Kustomize overlay, and image digest
-- Distinguish successful reconciliation from a healthy rollout
-- Choose the rollback owner for a render, sync, rollout, migration, service, or Terraform failure
-- Assemble a release record for a self-contained fictional repository
 
 ## Production adds ownership after deployment
 
@@ -134,6 +121,10 @@ The constraint selects the reviewed major release line, while `.terraform.lock.h
 
 State is production data. Use a remote backend with encryption, narrow write access, versioned storage where available, and locking where the backend supports it. Keep separate state scopes where one mistake should not affect every environment. State may contain sensitive values, so do not place it in Git or edit its JSON directly. If a lock appears stale, first prove that no live writer exists; only then use `terraform force-unlock`. If state is lost or corrupt, restore the correct backend version or import the surviving objects. A state restore repairs Terraform's mapping, not the cloud resources. Before an exceptional `terraform state push`, save `terraform state pull`, verify lineage and serial, and treat the push as a last resort. Finish every recovery with a new plan that explains all proposed actions.
 
+### Existing CDKTF stacks are a migration case
+
+CDK for Terraform (CDKTF) was a language-based frontend that synthesized Terraform configuration. HashiCorp deprecated it on December 10, 2025 and states that it no longer supports or maintains the project. Do not start a new platform on CDKTF. An existing stack still needs controlled maintenance while it is migrated: pin the working language, library, provider, and CLI versions; retain the generated configuration used for review; and preserve Terraform resource addresses and state ownership so a source rewrite does not become an accidental destroy-and-create plan. Deprecation changes the maintenance decision, not the safety rules around plans and state.
+
 ## Promote one artifact through separately owned state
 
 Development, staging, and production are operating boundaries, not merely labels in one manifest. Each environment needs an owner, cloud identity, Terraform state boundary, secret source, network and data policy, capacity, and rollback path. A shared module can define common structure, while inputs and policy express the differences. Do not make a production state file readable or writable by a lower environment just because both use the same module.
@@ -234,9 +225,9 @@ In a GitOps application, prefer restoring the desired revision or image in Git s
 
 Terraform has no universal application-style rollback. Reverting a configuration commit merely proposes another plan, and the provider may require replacement or destruction to reach the earlier shape. Restoring an old state file changes Terraform's ownership record; it does not undo remote API calls. Review the new plan, data retention, names, dependencies, and temporary capacity before claiming recovery.
 
-## Fictional practice: assemble a release record
+## Worked case: a reproducible release record
 
-Suppose the bookshop uses the repository below. The layout, revisions, cluster names, and image digests exist only for this exercise:
+Suppose the bookshop uses the repository below. The layout, revisions, cluster names, and shortened digests exist only in this fictional example:
 
 ```text
 clusters/
@@ -252,15 +243,23 @@ apps/storefront/overlays/production/
   kustomization.yaml
 ```
 
-The staging candidate points at Git revision `4d2c0f1` and image digest `sha256:111...`; the prior release points at revision `8a7b3e2` and digest `sha256:000...`. Treat the shortened values as placeholders, not usable artifact identifiers.
+The staging candidate points at Git revision `4d2c0f1` and image digest `sha256:111...`; the prior release points at revision `8a7b3e2` and digest `sha256:000...`. Treat the shortened values as placeholders, not usable artifact identifiers. In this example, `storefront-appset.yaml` generates a staging Application whose source is revision `4d2c0f1`, whose path is `apps/storefront/overlays/staging`, and whose destination namespace is `storefront-staging`. Automated sync is enabled.
 
-1. Read `storefront-appset.yaml` and identify which fields select the source revision, overlay path, destination namespace, and automated-sync policy.
-2. Render `apps/storefront/overlays/staging` from revision `4d2c0f1`. Record the object kinds, image digest, labels and selectors, probes, resource requests, service ports, identity, and rollout strategy. Keep the exact render as the review artifact.
-3. Confirm whether the workload is a Deployment or an Argo Rollout. Installing the Rollouts controller does not make it the owner of an ordinary Deployment.
-4. Write a release record containing source revision, render command and version, output checksum, artifact digest, destination, diff, test evidence, rollout owner, health gates, stop conditions, migration compatibility, and the prior release.
-5. Decide recovery for a render rejection, an unready workload after sync, and rising errors after partial exposure. Name the Git change, controller convergence, service evidence, and any database state that prevents the earlier image from running.
+The release workflow checks out that exact revision and renders the selected overlay with `kustomize build`. The render contains a Deployment and a Service. The Deployment uses `sha256:111...`; its Pod labels match both the Deployment selector and Service selector, and its readiness probe, resource requests, ports, identity, and rolling-update policy are present in the saved output. Because the rendered workload kind is `Deployment`, the Kubernetes Deployment controller owns its rollout. The presence of an Argo Rollouts controller elsewhere in the cluster would not change that ownership.
 
-_The exercise ends with a reproducible render, release gates, and a recovery decision._
+The resulting release record keeps the inputs and evidence together:
+
+| Field                    | Recorded value                                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Source and render        | Revision `4d2c0f1`, staging overlay path, render command, tool version, exact output, and output checksum        |
+| Artifact and destination | Image digest `sha256:111...`, staging cluster, and `storefront-staging` namespace                                |
+| Change review            | Sanitized diff, policy and schema checks, test evidence, migration compatibility, and approved reviewer          |
+| Rollout contract         | Deployment controller, readiness and service-health gates, stop conditions, and observation window               |
+| Recovery record          | Prior revision `8a7b3e2`, prior digest `sha256:000...`, prior render, and any database compatibility restriction |
+
+A render or policy rejection stops the release before Argo sync. The candidate is fixed or reverted, then rendered and reviewed again. If the Deployment syncs but never becomes ready, the operator first stops further exposure, restores the prior digest in Git, lets Argo converge, and verifies the replacement Pods and service signals. If errors rise after partial exposure, traffic to the candidate is removed before the same desired-state recovery. A forward-only schema change changes that decision: the old image is restored only if the migration contract says it remains compatible; otherwise the team uses its written roll-forward or restore procedure.
+
+_The completed record connects one source revision to its render, artifact, destination, rollout evidence, and recovery boundary._
 
 ```text
 source identifier + selected base/overlay + artifact identity
@@ -281,7 +280,7 @@ Infrastructure delivery starts with explicit ownership. Terraform records provid
 - A release record ties the source revision, artifact digest, render input and tool, destination, gates, and prior release together. Render the selected overlay before approving its effects.
 - Distinguish Argo comparison and sync, workload rollout, ready traffic, and service behavior. Each transition has a different owner and different evidence.
 - Roll back the state that actually changed. Restore Git intent for a bad application release, use the migration recovery contract after a forward-only data change, and use a reviewed Terraform plan for provider resources. Restoring state alone does not reverse remote calls.
-- A fictional repository is enough to practice the evidence chain; source revision, render, artifact identity, controller status, service health, and recovery decision must still agree.
+- The fictional repository demonstrates the evidence chain: source revision, render, artifact identity, controller status, service health, and recovery decision must agree.
 
 ## References
 
@@ -295,6 +294,7 @@ Infrastructure delivery starts with explicit ownership. Terraform records provid
 - [Terraform state recovery](https://developer.hashicorp.com/terraform/cli/state/recover): State pull, push, locking, and recovery cautions.
 - [Terraform plan workflow](https://developer.hashicorp.com/terraform/tutorials/cli/plan): Includes the warning that saved plans may contain sensitive data.
 - [Terraform plan command reference](https://developer.hashicorp.com/terraform/cli/commands/plan)
+- [HashiCorp CDKTF deprecation notice](https://developer.hashicorp.com/terraform/cdktf/community)
 - [Argo CD automated sync policy](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/)
 - [Argo CD ApplicationSet](https://argo-cd.readthedocs.io/en/stable/user-guide/application-set/)
 - [Argo CD application diff](https://argo-cd.readthedocs.io/en/stable/user-guide/commands/argocd_app_diff/)

@@ -3,10 +3,12 @@ output: site
 public: public
 
 theme:
+  showListDetails: false
+  showPageDetails: false
   stylesheet: theme.css
 
 site:
   title: Raj's Notes
-  description: Notes Raj is collecting, mostly about software systems, infrastructure, AI inference, and agent engineering.
+  description: Notes Raj is collecting, mostly about software systems, infrastructure, databases, AI inference, and agent engineering.
   lang: en
   logo: favicon.svg

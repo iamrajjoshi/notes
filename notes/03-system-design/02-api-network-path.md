@@ -1,11 +1,9 @@
 ---
 title: Design the API and Account for the Network Path
-shortTitle: API and network path
 description: Trace a request through DNS, transport, encryption, load balancing, and application code; then define API semantics that remain safe under retries and partial failure.
-collection: system-design
 slug: api-network-path
 order: 2
-number: SD2
+identifier: SD2
 duration: 2.5 hours
 difficulty: Foundation
 tags:
@@ -23,18 +21,6 @@ tags:
 ## Working model
 
 A request is a shrinking deadline carried across hops. Each hop consumes time, may retry, and can lose the reply after committing the work; the API contract must survive that ambiguity.
-
-## Questions this note answers
-
-- Turn a functional requirement into request, response, error, identity, and authorization contracts
-- Allocate an end-to-end latency target across network and service hops
-- Explain what L4 and L7 load balancers can inspect and decide
-- Define health checks, draining, affinity, TLS termination, and retry ownership for a load-balanced service
-- Design cursor pagination and rate-limit responses without unstable offsets
-- Make state-changing requests safe to retry with idempotency keys
-- Evolve schemas across old and new readers, writers, retries, and stored messages
-- Distinguish a client deadline from per-attempt timeouts
-- Choose HTTP, gRPC, server-sent events, or WebSocket from the interaction pattern
 
 ## Turn each operation into an interface contract
 
@@ -196,7 +182,7 @@ sequenceDiagram
   Payments-->>Client: Return saved result
 ```
 
-## Count the requests made during health-check delay
+## Health-check delay creates failed traffic
 
 Assume eight equal targets receive 800 HTTP requests each second and routing is uniform at 100 requests per target per second. Two targets begin returning errors together. With a 10-second active-check interval and three consecutive failures required, detection can take about 20 to 30 seconds depending on when the fault occurs relative to the last successful check. Before removal, the two targets can receive roughly 4,000 to 6,000 failed requests under this simplified distribution.
 
@@ -223,9 +209,9 @@ Break an end-to-end trace into resolution, connection setup, TLS, edge queue, up
 
 Compare status codes and connection outcomes at both sides of every proxy. A client may record a timeout while the edge records a successful upstream response delivered too late. Track attempts per original operation, remaining deadline at each hop, pool occupancy, handshake rate, reused-connection ratio, and the count of idempotency replays. Those measurements separate a slow dependency from retry multiplication, cold connections, or a rate limiter rejecting work before the service sees it.
 
-> **Retry test.** Disable retries for one controlled cohort. If dependency load falls and successful completions rise, retries were consuming the capacity needed for first attempts.
+> **Retry amplification evidence.** Disable retries for one controlled cohort. If dependency load falls and successful completions rise, retries were consuming the capacity needed for first attempts.
 
-## Running design checkpoint
+## Continuing worked case: request contract and network path
 
 The order service now has four tenant-scoped operations. `POST /v1/orders` creates an order, `GET /v1/orders/{id}` fetches one, `GET /v1/orders?before=<cursor>&limit=100` lists recent orders, and `PATCH /v1/orders/{id}/status` advances state only when the supplied version matches. Authentication establishes the caller's tenant; handlers do not trust a tenant ID copied from the JSON body.
 

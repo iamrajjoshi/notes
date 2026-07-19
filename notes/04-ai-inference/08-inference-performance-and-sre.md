@@ -1,11 +1,9 @@
 ---
 title: Inference performance and SRE
-shortTitle: Performance and SRE
 description: Define request-phase SLOs, replay a real workload, and turn latency, useful throughput, power, and energy measurements into capacity decisions.
-collection: ai-inference
 slug: inference-performance-and-sre
 order: 8
-number: AI8
+identifier: AI8
 duration: 170 min
 difficulty: Core
 tags:
@@ -19,30 +17,20 @@ tags:
 
 A good inference service returns acceptable output inside a stated latency target while demand, failures, and cost vary. GPU utilization alone cannot answer that question. Measure output quality, request phases, useful throughput, overload behavior, device health, energy, and total service cost under a defined workload.
 
-## Questions this note answers
-
-- Define TTFT, TBT or inter-token latency, TPOT, and end-to-end latency precisely
-- Distinguish raw throughput from SLO-compliant goodput
-- Design open-loop load tests that expose overload instead of hiding it
-- Calculate first-pass replica count and queue headroom from measured service envelopes
-- Track cost per useful token without ignoring warm idle capacity
-- Distinguish instantaneous power from accumulated energy and calculate energy per useful request or token
-- Construct a task-specific output-quality gate without treating an automated grader as truth
-
 ## Define what “good” means before measuring it
 
 Performance terms answer different questions:
 
-| Term                        | Question it answers                                                                                                                                                        |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Correctness or quality gate | Does this exact model bundle still produce acceptable results for the tasks the product needs?                                                                             |
-| Latency                     | How long does one request or phase take? Report a distribution rather than only an average.                                                                                |
-| Throughput                  | How much work finishes per unit time, such as requests or output tokens per second?                                                                                        |
-| Goodput                     | How much work finishes while meeting the stated quality and latency rules?                                                                                                 |
-| Utilization                 | During what fraction of sampled time did a resource report activity? It does not say whether the work was useful.                                                          |
-| Saturation                  | Has a constrained resource or queue reached the point where added demand increases waiting, rejection, or missed deadlines?                                                |
-| Availability                | Can an eligible request reach enough healthy serving capacity to receive the promised response? Define which planned rejections and client faults count.                   |
-| SLI and SLO                 | An SLI is a measured service indicator. An SLO sets its target and evaluation window, such as 99% of eligible requests receiving a first token within 800 ms over 28 days. |
+| Term                        | Question it answers                                                                                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Correctness or quality gate | Does this exact model bundle still produce acceptable results for the tasks the product needs?                                                                                                                |
+| Latency                     | How long does one request or phase take? Report a distribution rather than only an average.                                                                                                                   |
+| Throughput                  | How much work finishes per unit time, such as requests or output tokens per second?                                                                                                                           |
+| Goodput                     | How much work finishes while meeting the stated quality and latency rules?                                                                                                                                    |
+| Utilization                 | During what fraction of sampled time did a resource report activity? It does not say whether the work was useful.                                                                                             |
+| Saturation                  | Has a constrained resource or queue reached the point where added demand increases waiting, rejection, or missed deadlines?                                                                                   |
+| Availability                | Can an eligible request reach enough healthy serving capacity to receive the promised response? Define which planned rejections and client faults count.                                                      |
+| SLI and SLO                 | A service-level indicator (SLI) is a measurement. A service-level objective (SLO) sets its target and evaluation window, such as 99% of eligible requests receiving a first token within 800 ms over 28 days. |
 
 Site reliability engineering (SRE) connects those product targets to measurement, capacity, change management, and failure response. State workload and eligibility beside the SLO. Model bundle, prompt and output distributions, arrival process, streaming mode, cache state, adapters, and hardware all change the result. A service can meet a latency target by returning bad output or rejecting most traffic, so quality, success, rejection, and offered demand remain visible together.
 
@@ -67,7 +55,7 @@ Set thresholds before the run: a minimum overall result, maximum regression for 
 
 ## Define each latency clock before drawing a chart
 
-TTFT measures request arrival to first delivered token, unless a team explicitly chooses a narrower server boundary. Time between tokens, often TBT or inter-token latency, describes streaming cadence. TPOT definitions vary: some divide decode duration by generated tokens, while others exclude the first token. State the formula and denominator.
+Time to first token (TTFT) measures request arrival to first delivered token, unless a team explicitly chooses a narrower server boundary. Time between tokens (TBT), also called inter-token latency, describes streaming cadence. Time per output token (TPOT) definitions vary: some divide decode duration by generated tokens, while others exclude the first token. State the formula and denominator.
 
 End-to-end latency ends at the final response event. Report percentiles by prompt size, output size, model, priority, and streaming mode. A single p50 across mixed workloads cannot explain user experience.
 
@@ -135,7 +123,7 @@ Convert arrival rate into input and output token demand, then compare both again
 
 Cost per million useful tokens should include reserved or warm replicas, failed work, model downloads, networking, storage, orchestration, and supporting CPU services. Admission limits keep demand inside the region where the measured service envelope remains true.
 
-> **Hypothetical example.** Suppose a document-processing service runs Docling workers before downstream model calls. Page count, file type, OCR path, CPU demand, memory demand, and accelerator demand vary by document class. Measure those classes separately and route oversized work instead of multiplying one average file by the daily count.
+> **Hypothetical example.** Suppose a document-processing service runs Docling workers before downstream model calls. Page count, file type, optical character recognition (OCR) path, CPU demand, memory demand, and accelerator demand vary by document class. Measure those classes separately and route oversized work instead of multiplying one average file by the daily count.
 
 ## Connect arrival rate, residence time, and concurrency
 
@@ -158,7 +146,7 @@ Record timestamps from one clock domain where possible: arrival, admission, queu
 
 Report sample count and time window with every percentile. A p99 from 50 requests is not an observed one-in-one-hundred tail. Avoid averaging percentiles from separate workers because the result is not the fleet percentile; combine compatible histograms or events first. Split success, rejection, timeout, and cancellation rather than omitting failed requests from the latency view. During an overload test, compare scheduled arrival time with actual send time so a delayed load generator does not erase the queueing pressure it was meant to create.
 
-> **Boundary check.** A server-side TTFT can improve while client-observed TTFT worsens if proxy buffering, network delivery, or a slow stream consumer changed.
+> **Delivery boundary.** A server-side TTFT can improve while client-observed TTFT worsens if proxy buffering, network delivery, or a slow stream consumer changed.
 
 ## Saturation should produce a controlled response
 

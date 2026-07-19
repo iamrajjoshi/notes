@@ -1,16 +1,13 @@
 ---
 title: Celery task processing under failure
-shortTitle: Celery
 description: Design background tasks around brokers, acknowledgements, retries, visibility, prefetch, idempotency, and poison work.
-collection: cloud-infrastructure
 slug: celery-task-processing
 order: 8
-number: CI8
+identifier: CI8
 duration: 110 min
 difficulty: Core
 tags:
   - Celery
-  - Valkey
   - acknowledgements
   - idempotency
   - backpressure
@@ -20,18 +17,11 @@ tags:
 
 A Celery message is a lease on work, not proof of completion. The acknowledgement boundary decides whether a crash loses, repeats, or stalls that work.
 
-## Questions this note answers
-
-- Separate Celery's broker, workers, task state, and optional result backend
-- Choose acknowledgement and retry behavior for crash-safe tasks
-- Control prefetch, scheduled-task memory, concurrency, timeouts, and queue isolation
-- Explain when a task queue fits better than a retained event log
-
 ## Start with one background job
 
 Suppose an HTTP request asks for a large export. Generating it inside the request may exceed the caller's deadline and consume a web process for minutes. With Celery, the web application sends a small message naming an export task and its arguments. A broker stores that message until a Celery worker reserves it. The worker calls the registered Python task, writes the export to durable storage, and acknowledges the message according to the configured policy.
 
-Celery is the task framework and worker runtime; it is not the broker. A deployment also chooses a broker transport such as RabbitMQ or Redis-compatible storage, and may choose a separate result backend. Broker choice changes acknowledgement, visibility, monitoring, and failure behavior.
+Celery is the task framework and worker runtime; it is not the broker. A deployment also chooses a broker transport such as RabbitMQ or Redis-compatible storage, and may choose a separate result backend. RabbitMQ is a message broker with exchanges, queues, acknowledgements, and broker-side delivery state; a Redis-compatible transport maps Celery delivery onto Redis data structures and visibility-timeout behavior. Broker choice changes acknowledgement, visibility, monitoring, and failure behavior.
 
 | Term               | Meaning                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -56,7 +46,7 @@ Pass stable identifiers rather than stale object snapshots. The task should relo
 
 ## Join a fictional worker Deployment to its task contract
 
-The bookshop's HTTP handler creates an export row with a unique `export_id`, commits it, then dispatches `reports.generate(export_id)`. Celery routing sends that task to the `exports` queue. The `export-worker` Deployment starts Celery with that queue allowlist, exposes worker health through a separate probe process, requests enough memory for one export per child, and allows a bounded drain interval before Kubernetes terminates it. These names and values exist only in the exercise.
+The bookshop's HTTP handler creates an export row with a unique `export_id`, commits it, then dispatches `reports.generate(export_id)`. Celery routing sends that task to the `exports` queue. The `export-worker` Deployment starts Celery with that queue allowlist, exposes worker health through a separate probe process, requests enough memory for one export per child, and allows a bounded drain interval before Kubernetes terminates it. These names and values exist only in this fictional example.
 
 The task reloads the export row, claims it with a conditional database update, and writes the resulting object under the same `export_id`. If the result already exists, a repeated attempt records completion without writing another object. Temporary object-store errors retry with a cap and jitter; invalid export parameters mark the row failed without retry. Celery delivery state and the export row answer different questions, so the status API reads the application row rather than promising that a broker acknowledgement means the report exists.
 
@@ -95,7 +85,7 @@ Don't use a result backend as an event log, and don't force a simple command que
 
 ## Reservation count can exceed execution slots
 
-Take a late-acknowledging worker with concurrency 8 and a prefetch multiplier of 4. Its quality-of-service prefetch count can allow up to 32 unacknowledged task reservations, subject to transport behavior, while only eight process slots execute at once. If the first reserved tasks each run for ten minutes, up to 24 other reservations can sit inside that worker instead of being available to a peer. Reducing the multiplier toward one limits hoarding for long work; short uniform tasks may lose some throughput because workers have less work ready locally.
+Take a late-acknowledging worker with concurrency 8 and a prefetch multiplier of 4. Its Celery and broker quality-of-service prefetch count—the reservation credit available to that worker—can allow up to 32 unacknowledged task reservations, subject to transport behavior, while only eight process slots execute at once. This is unrelated to Kubernetes Pod quality-of-service classes. If the first reserved tasks each run for ten minutes, up to 24 other reservations can sit inside that worker instead of being available to a peer. Reducing the multiplier toward one limits hoarding for long work; short uniform tasks may lose some throughput because workers have less work ready locally.
 
 Now let a late-acknowledged task write an external result and then lose its worker process before the acknowledgement reaches the broker. Depending on transport and worker-loss settings, the message may return for another attempt. The second run must detect the existing result through a semantic idempotency key and finish without repeating the external effect. A timeout or retry does not undo the first process, so pass the same key to a downstream API that supports idempotency and store completion under a uniqueness constraint when possible.
 

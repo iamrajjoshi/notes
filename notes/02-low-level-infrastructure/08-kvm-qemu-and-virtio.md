@@ -1,11 +1,9 @@
 ---
 title: KVM, QEMU, hypercalls, and virtio
-shortTitle: Virtual machines
 description: Separate the kernel virtualization API, virtual machine monitor, guest kernel, and device path behind a Linux virtual machine.
-collection: low-level-infrastructure
 slug: kvm-qemu-and-virtio
 order: 8
-number: LL8
+identifier: LL8
 duration: 140 min
 difficulty: Advanced
 tags:
@@ -18,14 +16,6 @@ tags:
 ## Working model
 
 A VM has two operating-system layers. The guest kernel manages guest processes and virtual devices; the VMM builds the virtual machine in host user space, while KVM lets its vCPU threads enter hardware-assisted guest execution.
-
-## Questions this note answers
-
-- Explain KVM's role without calling it a complete VM product
-- Describe QEMU's machine and device-model responsibilities
-- Distinguish syscalls, explicit hypercalls, and other VM exits
-- Trace a virtio request through guest and host components
-- Explain why an IOMMU matters for direct device access
 
 ## A virtual machine includes a second kernel
 
@@ -123,7 +113,7 @@ Virtio notification suppression is an optimization rather than a synchronized pr
 
 A guest reports what it can see: run-queue delay, steal time, I/O wait, device latency, and its own pressure. On the host, map each guest vCPU to its QEMU thread, inspect host scheduler delay and cgroup throttling, then count KVM exits by reason. An exit rate alone is weak evidence; record time per exit and the work done before re-entry. Device-emulation threads and vhost workers can bottleneck even when vCPU threads have spare CPU.
 
-For a slow virtual disk request, align a guest block trace with virtqueue, KVM, QEMU, host filesystem, and block-device events. `perf kvm stat`, `kvm_stat`, KVM tracepoints, QMP state, and per-thread scheduling tools provide different pieces, subject to build and permission. Retain CPU model, machine type, accelerator, cache mode, image format, queue count, host NUMA placement, and guest kernel with the result.
+For a slow virtual disk request, align a guest block trace with virtqueue, KVM, QEMU, host filesystem, and block-device events. `perf kvm stat`, `kvm_stat`, KVM tracepoints, state queried through the QEMU Machine Protocol (QMP) JSON management interface, and per-thread scheduling tools provide different pieces, subject to build and permission. Retain CPU model, machine type, accelerator, cache mode, image format, queue count, host NUMA placement, and guest kernel with the result.
 
 _Tool syntax and access vary by distribution. Use the monitor command supported by the selected management layer._
 
@@ -159,5 +149,6 @@ KVM, the VMM, and the guest kernel own different parts of a virtual machine. Per
 - [Linux kernel: KVM API](https://docs.kernel.org/virt/kvm/api.html)
 - [Linux kernel: KVM x86 hypercalls](https://docs.kernel.org/virt/kvm/x86/hypercalls.html)
 - [QEMU: system emulation introduction](https://www.qemu.org/docs/master/system/introduction.html)
+- [QEMU Machine Protocol specification](https://www.qemu.org/docs/master/interop/qmp-spec.html)
 - [QEMU: virtio devices](https://www.qemu.org/docs/master/system/devices/virtio/index.html)
 - [OASIS: Virtual I/O Device specification 1.4](https://docs.oasis-open.org/virtio/virtio/v1.4/virtio-v1.4.html)

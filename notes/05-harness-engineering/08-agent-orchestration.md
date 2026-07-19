@@ -1,11 +1,9 @@
 ---
 title: Agent orchestration
-shortTitle: Orchestration
 description: Assign planning, work, and evaluation roles with explicit dependencies, controlled parallelism, and stopping rules.
-collection: harness-engineering
 slug: agent-orchestration
 order: 8
-number: HE8
+identifier: HE8
 duration: 120 min
 difficulty: Advanced
 tags:
@@ -19,16 +17,6 @@ tags:
 
 Orchestration is dependency management around bounded workers. Split work only when ownership and merge rules are clear, then let an evaluator judge collected evidence against the original contract.
 
-## Questions this note answers
-
-- Choose between one agent, manager-as-tools, handoff, and planner-worker-evaluator patterns
-- Read a team manifest as enforceable roles, capabilities, dependencies, budgets, and terminal states
-- Represent task dependencies before launching parallel work
-- Account for fan-out latency and child work inside one parent budget
-- Merge worker evidence without hiding disagreement or artifact conflicts
-- Choose isolated or shared context according to the work and trust boundary
-- Enforce success, no-progress, budget, and operator-stop conditions
-
 ## Add roles only when they create a clear boundary
 
 One agent with several tools is easier to trace and often enough. A manager can call specialized agents as tools when it should retain the conversation and assemble the final result. A handoff fits a real ownership transfer, while planner-worker-evaluator separates task decomposition, execution, and acceptance.
@@ -36,6 +24,40 @@ One agent with several tools is easier to trace and often enough. A manager can 
 Role names do not create independent judgment by themselves. Give the evaluator the task contract, candidate artifacts, and raw evidence rather than the worker's conclusion alone. If planner and evaluator share the same model and context, record that correlation instead of presenting their agreement as two independent votes.
 
 > **Orchestration smell.** If every worker receives the full task, edits the same artifact, and reports prose to the same model, the design added concurrency without defining ownership.
+
+## Choose among three control patterns
+
+All three patterns can use the same model and tool adapters. They differ in who owns the conversation, who may decide the next step, and where terminal responsibility sits.
+
+### A manager calls specialists as bounded tools
+
+The manager retains the user task and final answer. A specialist call looks like any other tool call: the manager supplies a narrow input contract, the runner starts an isolated child, and the child returns a structured result or error. The specialist cannot talk to the user, delegate beyond its cap, or silently take ownership of the run.
+
+Suppose a manager debugging a checkout failure can call `inspect_logs` and `inspect_schema`. Each specialist receives only the relevant time range or schema objects, has read-only tools, and returns cited findings at a pinned revision. The manager compares both results and decides what to ask next. This pattern fits bounded expertise whose output feeds one continuing line of reasoning. It is still one manager-controlled loop, not five peers voting on an answer.
+
+Avoid this shape when the manager must copy most of its context into every call or when a specialist needs hours of durable ownership. The tool boundary then adds token cost without reducing ambiguity.
+
+### A handoff transfers ownership
+
+A handoff ends one owner's active control and installs another. The transfer record contains the original contract, current messages or a bounded summary, completed receipts, pending effects, remaining budget, authority, source revision, and a reason for transfer. The receiving role must accept or reject that record before the old owner releases its lease.
+
+An intake agent might identify a database recovery incident and hand it to a recovery controller that has the right runbooks and approval path. After acceptance, the recovery controller chooses subsequent actions and owns the terminal report; the intake agent does not keep composing an answer in parallel. A failed acceptance returns ownership to the sender or enters `needs_human` according to the manifest.
+
+Use handoff for a real phase or authority change. Do not bounce a task between roles for stylistic review, because every transfer can lose context, split budgets, and muddy who owns an uncertain effect.
+
+### A planner fans out readers, then one writer and an evaluator finish
+
+The planner converts the contract into a dependency graph. Read-only workers inspect disjoint areas against the same immutable revision. A join rejects stale work and preserves disagreement; it then gives one writer an owned branch or resource set. After the writer produces a candidate revision, an evaluator with no write tool reads the original contract, raw receipts, and candidate artifacts.
+
+This is the strongest pattern for repository work that has parallel discovery but one integration boundary. The single writer avoids competing patches, while the evaluator cannot quietly repair the work it is judging. Independence is limited if both roles share a model family or instruction chain, so the trace should record those common dependencies.
+
+Do not use this graph for a one-file change whose focused test takes ten seconds. Planning, queueing, context construction, and joins can cost more than the task.
+
+## Keep one agent when coordination would dominate
+
+A team is the wrong default when each step depends on the full result of the last one, several roles would mutate the same object, or the task fits inside one bounded loop with one acceptance check. It also adds little when every role uses the same model profile, context, tools, and authority; new labels do not create a new source of evidence.
+
+Stay with one owner when the work is shorter than worker startup and join time, when the parent cannot state independent output contracts, or when the budget cannot reserve enough capacity to finish after one worker fails. Fix an unclear task contract before splitting it. Parallel ambiguity produces more reports, not a better decision.
 
 ## A team is a manifest executed by one runner
 
@@ -128,40 +150,6 @@ cancellation:
 
 The manifest records intent; enforcement still lives in code. The scheduler must refuse undeclared tools, the executor must reject writes outside `allowed_writes`, and the budget service must debit actual child use from the aggregate. A YAML file that the model may reinterpret is documentation, not policy.
 
-## Choose among three control patterns
-
-All three patterns can use the same model and tool adapters. They differ in who owns the conversation, who may decide the next step, and where terminal responsibility sits.
-
-### A manager calls specialists as bounded tools
-
-The manager retains the user task and final answer. A specialist call looks like any other tool call: the manager supplies a narrow input contract, the runner starts an isolated child, and the child returns a structured result or error. The specialist cannot talk to the user, delegate beyond its cap, or silently take ownership of the run.
-
-Suppose a manager debugging a checkout failure can call `inspect_logs` and `inspect_schema`. Each specialist receives only the relevant time range or schema objects, has read-only tools, and returns cited findings at a pinned revision. The manager compares both results and decides what to ask next. This pattern fits bounded expertise whose output feeds one continuing line of reasoning. It is still one manager-controlled loop, not five peers voting on an answer.
-
-Avoid this shape when the manager must copy most of its context into every call or when a specialist needs hours of durable ownership. The tool boundary then adds token cost without reducing ambiguity.
-
-### A handoff transfers ownership
-
-A handoff ends one owner's active control and installs another. The transfer record contains the original contract, current messages or a bounded summary, completed receipts, pending effects, remaining budget, authority, source revision, and a reason for transfer. The receiving role must accept or reject that record before the old owner releases its lease.
-
-An intake agent might identify a database recovery incident and hand it to a recovery controller that has the right runbooks and approval path. After acceptance, the recovery controller chooses subsequent actions and owns the terminal report; the intake agent does not keep composing an answer in parallel. A failed acceptance returns ownership to the sender or enters `needs_human` according to the manifest.
-
-Use handoff for a real phase or authority change. Do not bounce a task between roles for stylistic review, because every transfer can lose context, split budgets, and muddy who owns an uncertain effect.
-
-### A planner fans out readers, then one writer and an evaluator finish
-
-The planner converts the contract into a dependency graph. Read-only workers inspect disjoint areas against the same immutable revision. A join rejects stale work and preserves disagreement; it then gives one writer an owned branch or resource set. After the writer produces a candidate revision, an evaluator with no write tool reads the original contract, raw receipts, and candidate artifacts.
-
-This is the strongest pattern for repository work that has parallel discovery but one integration boundary. The single writer avoids competing patches, while the evaluator cannot quietly repair the work it is judging. Independence is limited if both roles share a model family or instruction chain, so the trace should record those common dependencies.
-
-Do not use this graph for a one-file change whose focused test takes ten seconds. Planning, queueing, context construction, and joins can cost more than the task.
-
-## Keep one agent when coordination would dominate
-
-A team is the wrong default when each step depends on the full result of the last one, several roles would mutate the same object, or the task fits inside one bounded loop with one acceptance check. It also adds little when every role uses the same model profile, context, tools, and authority; new labels do not create a new source of evidence.
-
-Stay with one owner when the work is shorter than worker startup and join time, when the parent cannot state independent output contracts, or when the budget cannot reserve enough capacity to finish after one worker fails. Fix an unclear task contract before splitting it. Parallel ambiguity produces more reports, not a better decision.
-
 ## Decompose by evidence and write boundaries
 
 A planner owns the dependency graph, not the truth of each finding. A worker owns one bounded investigation or write set and returns artifacts plus evidence. A join owns conflict detection and version matching. An evaluator owns comparison with the original contract, while the runner owns budgets, cancellation, authority, and terminal state. These roles can run in one process or several; separate names matter only when the contracts differ.
@@ -248,13 +236,13 @@ Joins accept results only from the expected run, revision, and epoch. Suppose th
 
 Worker crashes do not erase parent accounting. Calls and tool effects already attempted stay charged, reservations for impossible future work return to the parent, and the trace links the failure to any retry. A restarted child gets a new attempt ID under the same task ID so the join can distinguish repeated work from two independent findings.
 
-### Code walk: follow the team manifest to terminal status
+### Worked scheduler trace: follow the team manifest to terminal status
 
-Use the `team.v1` manifest near the start of this note. Before scheduling work, check that member IDs are unique, dependencies resolve, every write path belongs to one writer, and reserved member budgets fit inside the aggregate limits. A role label such as `evaluator` grants nothing by itself.
+Before the runner schedules the `team.v1` manifest near the start of this note, it checks that member IDs are unique, dependencies resolve, every write path belongs to one writer, and reserved member budgets fit inside the aggregate limits. A role label such as `evaluator` grants nothing by itself.
 
-Run the planner and both readers with scripted results, but tag `test_reader` with plan epoch 6 while the manifest expects epoch 7. `reader_join` must reject the stale result and choose its declared `on_missing` outcome; the writer never starts. Repeat with epoch 7, let the writer produce candidate `r2`, and give the evaluator a failed test receipt. Trace the single repair allowance to either a new accepted candidate or `rejected`.
+If `test_reader` returns plan epoch 6 while the manifest expects epoch 7, `reader_join` rejects the stale result and chooses its declared `on_missing` outcome; the writer never starts. With epoch 7, the writer may produce candidate `r2`. A failed test receipt then consumes the evaluator's single repair allowance and must end with either a new accepted candidate or `rejected`.
 
-At each transition, record the manifest field that permits it, the budget debit, the accepted artifact revision, and the stop reason. If the runner can't point to those records, the YAML describes a team without enforcing one.
+Each transition records the manifest field that permits it, the budget debit, the accepted artifact revision, and the stop reason. If the runner cannot point to those records, the YAML describes a team without enforcing one.
 
 ## Detect orchestration waste before it becomes a loop
 

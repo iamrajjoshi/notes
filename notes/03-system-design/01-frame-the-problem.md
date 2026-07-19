@@ -1,12 +1,10 @@
 ---
 title: Frame the Problem Before Drawing Boxes
-shortTitle: Frame the problem
 description: Convert a product prompt into explicit workloads, service indicators, reliability targets, and capacity estimates. Architecture starts only after the numbers expose the hard part.
-collection: system-design
 slug: frame-the-problem
 order: 1
-number: SD1
-duration: 2 hours
+identifier: SD1
+duration: 3 hours
 difficulty: Foundation
 tags:
   - requirements
@@ -19,15 +17,6 @@ tags:
 ## Working model
 
 A design is a budget ledger. Traffic, bytes, latency, availability, recovery time, and engineering effort all spend from a finite budget; an unlabeled box hides the bill rather than paying it.
-
-## Questions this note answers
-
-- Restate a vague prompt as a user, an operation, an outcome, and a boundary
-- Ask clarification questions that can change the data model, request path, or failure policy
-- Separate functional requirements from quality constraints and exclusions
-- Define an SLI with a numerator, denominator, measurement point, and window
-- Translate daily volume, peak ratio, payload size, and retention into RPS, bandwidth, and storage
-- Record assumptions as ranges and identify which estimate could change the design
 
 ## Start with a one-sentence restatement
 
@@ -54,7 +43,11 @@ Clarification is not a checklist recital. Ask a question, explain why it matters
 
 Fan-out is the number of downstream recipients or operations caused by one input. Work is asynchronous when it may finish after the request returns. Recovery time objective (RTO) bounds restoration time; recovery point objective (RPO) bounds acceptable lost history. A projection is a derived copy such as a search index or analytic table.
 
-Suppose the interviewer chooses this contract for the notification example: email and push submission, preferences, and status are in scope; campaign design is out; peak submission is 40,000 requests each second; 99% of accepted submissions finish within 200 ms at the service edge; urgent dispatch should start within five seconds; an ambiguous failure may repeat a provider dispatch; status remains for 30 days; and the first version runs in one geographic Region with copies across several failure-isolation zones. These are exercise inputs, not facts about notification systems. In a real discussion, label every value supplied, measured, or assumed.
+Five later mechanisms appear in the orientation design. A **transactional outbox** is an event record committed with business state so a relay can publish it afterward. **Change data capture (CDC)** reads committed changes from a database log or change interface. **At-least-once delivery** permits the same record to arrive again, so the consumer needs a stable identity and a repeat-safe effect. A **write-ahead log (WAL)** makes committed changes recoverable before every changed data page reaches its final file. **Fencing** gives each new authority a higher epoch or token that the protected resource uses to reject an older writer. SD4 through SD7 derive these paths; these sentences only establish the vocabulary used in the first diagram.
+
+### Standalone framing example: notification service
+
+Suppose the interviewer chooses this contract for a short notification example: email and push submission, preferences, and status are in scope; campaign design is out; peak submission is 40,000 requests each second; 99% of accepted submissions finish within 200 ms at the service edge; urgent dispatch should start within five seconds; an ambiguous failure may repeat a provider dispatch; status remains for 30 days; and the first version runs in one geographic Region with copies across several failure-isolation zones. These are illustrative assumptions, not facts about notification systems. In a real discussion, label every value supplied, measured, or assumed. The continuing order-and-notification case begins later in this note and uses its own fixed workload.
 
 ## Produce the design artifacts in a stable order
 
@@ -72,6 +65,25 @@ The diagram comes fourth, after enough evidence exists to earn its boxes. Keepin
 
 SD2 builds the interface and request path. SD3 through SD9 supply storage, relational-engine, distribution, coordination, asynchronous, overload, and scheduling mechanisms; SD10 adds recovery plus operating evidence. SD11 shows how to compress the same artifact order into an interview conversation.
 
+## Use interview time as a feedback loop
+
+An interview is collaborative design under a deadline. State how you will spend the time, but change the split when the interviewer redirects the problem. For an illustrative 45-minute session:
+
+|      Time | Work                                                  | Visible result                                                     |
+| --------: | ----------------------------------------------------- | ------------------------------------------------------------------ |
+|   0–4 min | Restate prompt, actors, scope, and success            | One-sentence boundary plus exclusions                              |
+|   4–9 min | Ask design-changing questions                         | Functional and quality requirements with labeled assumptions       |
+|  9–13 min | Estimate peak traffic, bytes, retention, and skew     | Four to six lines of arithmetic and the likely bottleneck          |
+| 13–18 min | Sketch API, entities, keys, and invariants            | Interface and data contract before components                      |
+| 18–25 min | Draw the high-level path                              | One labeled normal request across authority and async boundaries   |
+| 25–35 min | Deepen the part forced by requirements                | Storage, partitioning, queue, consistency, or scheduling mechanism |
+| 35–40 min | Trace retry, overload, and one infrastructure failure | Failure behavior through the same boxes                            |
+| 40–45 min | Recap choices, limits, signals, and next change       | Decision ledger and unresolved assumptions                         |
+
+Do not spend the first ten minutes silently writing. Narrate the boundary and arithmetic so the interviewer can correct an assumption before it becomes five boxes. After each major choice, connect it to a requirement: “Because accepted writes cannot disappear after one zone fails, the commit waits at this replicated durability boundary.” That sentence is more useful than listing three database brands.
+
+When an answer is unknown, expose it as an assumption and say what it controls. “I will assume the hottest tenant is below 5% for the first layout; if it reaches 20%, the partition key needs bucketing” keeps the design moving without hiding uncertainty.
+
 ## Write the contract in plain language
 
 Start with user-visible actions and the data each action reads or changes. State what the system will not do in this version; exclusions stop a design from quietly absorbing unrelated requirements.
@@ -85,7 +97,7 @@ Quality constraints need a measurement surface. 'Fast' is unusable. '99% of acce
 
 ## Separate behavior, quality, and constraints
 
-Functional requirements say what a user or another system can do: append an event, fetch a feed, delete an account, or export a report. Quality requirements bound how that behavior must work, such as latency, availability, durability, privacy, or recovery time. Constraints record facts the design cannot change in the current exercise, including an existing database, a regional data rule, or a fixed delivery date.
+Functional requirements say what a user or another system can do: append an event, fetch a feed, delete an account, or export a report. Quality requirements bound how that behavior must work, such as latency, availability, durability, privacy, or recovery time. Constraints record facts the current design cannot change, including an existing database, a regional data rule, or a fixed delivery date.
 
 Write exclusions beside requirements because silence creates accidental scope. If full-text search, cross-region writes, and historical backfill are outside the first version, say so. An exclusion can still name the future pressure it creates. That note stops the current design from pretending the problem will never arrive while keeping the estimate tied to work that somebody has actually requested.
 
@@ -132,15 +144,15 @@ _Round for communication only after retaining the unrounded value in the workshe
 
 A tenfold peak ratio may force sharding while a twofold ratio does not. Calculate both. Mark inputs as measured, promised, or guessed, and write the cheapest experiment that would replace the dangerous guess with evidence.
 
-## Check whether the contract measures the real failure
+## Measurement boundaries can hide the real failure
 
 A design can satisfy its spreadsheet and still fail users because the denominator, peak window, or payload sample was wrong. Compare request attempts at the edge with requests admitted by the application; the difference reveals rejection before application instrumentation. Split latency by operation and response class, since one cheap health endpoint can hide a slow checkout path. Plot queue time and saturation beside latency so an operator can tell whether work is slow before execution or during it.
 
 Revisit the estimate after a representative load test. Record achieved throughput, p50 and p99 latency, error rate, CPU, memory, connection-pool occupancy, and storage write rate at each step. The first resource that bends sharply identifies the present limit. If production peaks differ from the assumed shape, update the workload model and every dependent budget rather than adding a vague safety factor. The worksheet should preserve both the old assumption and the evidence that replaced it.
 
-> **Diagnostic question.** Which measured input would change a storage engine, partition count, or failure policy? Measure that input before refining boxes that stay the same across the whole range.
+> **Capacity-changing evidence.** Measure any input that could change the storage engine, partition count, or failure policy before refining boxes that stay the same across the whole range.
 
-## Running design checkpoint
+## Continuing worked case: scope and capacity
 
 The running case is a multi-tenant order and notification service. A merchant can create an order, fetch it, list recent orders, and advance its status. Every accepted status transition must eventually start one email or push dispatch. Payment execution, inventory ownership, message-template editing, and provider internals are outside the first boundary. “Accepted” means the order state and the intent to notify are durably recorded together; it does not mean the provider delivered a message.
 
@@ -153,6 +165,122 @@ The illustrative workload fixes the numbers used later: 1,000 average and 5,000 
 
 Indexes, replicas, logs, and temporary migration space sit outside that raw estimate. The create path targets p99 below 250 ms and 99.9% monthly availability. At least 99% of notification dispatches should start within five seconds of the committed transition. A regional disaster has a 15-minute RTO and 30-second RPO. The largest unverified assumption is the hottest tenant's traffic share; SD5 will test the stated 20% case rather than trusting a fleet average.
 
+### Interface and data sketch
+
+The first interface is deliberately small:
+
+```http
+POST /v1/orders
+Idempotency-Key: <tenant-scoped operation ID>
+
+GET /v1/orders/{order_id}
+
+GET /v1/orders?created_before=<cursor>&limit=100
+
+POST /v1/orders/{order_id}/transitions
+Idempotency-Key: <tenant-scoped operation ID>
+```
+
+Every request carries authenticated tenant identity; the server does not trust a tenant ID only because it appears in the body. Create and transition operations bind the idempotency key to a request fingerprint so accidental reuse with another payload fails.
+
+The authoritative data model begins with four records:
+
+```text
+order
+  tenant_id, order_id, version, status, line_items, created_at, updated_at
+
+operation_result
+  tenant_id, operation_id, request_fingerprint, result_type, result_id, response
+
+outbox_event
+  event_id, tenant_id, order_id, order_version, event_type, payload, created_at
+
+notification_attempt
+  event_id, channel, attempt, state, provider_reference, next_attempt_at
+```
+
+The create transaction inserts the order, saved operation result, and outbox event together. A unique key on `(tenant_id, operation_id)` settles concurrent retries. A guarded status transition requires the expected order version. The provider call stays outside the transaction; a worker later claims the outbox-derived work and records attempts idempotently.
+
+### High-level architecture and interview path
+
+```mermaid
+flowchart TB
+  accTitle: System-design interview flow and the running order service
+  accDescr: The interview moves from prompt to requirements, capacity, API and data, then a labeled architecture. A merchant request enters an edge and order API, commits order, idempotency result, and outbox state to an authoritative database, returns acceptance, and later reaches a notification provider through a durable stream and worker. Retry, overload, database failover, and provider failure follow the same components and end in explicit degraded behavior and operating evidence.
+
+  subgraph Method["Interview method"]
+    P["Prompt and one-sentence boundary"] --> R["Functional and quality requirements"]
+    R --> N["Peak rates, bytes, retention, skew"]
+    N --> AD["API, entities, keys, invariants"]
+    AD --> D["High-level request and data path"]
+    D --> X["Deep dive forced by the numbers"]
+    X --> F["Retry, overload, and failure trace"]
+    F --> L["Decision ledger and unresolved evidence"]
+  end
+
+  subgraph Service["Running order and notification design"]
+    M["Merchant client"] -->|"HTTPS with operation ID"| E["Edge: auth, rate limit, request ID"]
+    E -->|"bounded deadline"| API["Order API"]
+    API -->|"transaction: order + operation result + outbox"| DB[("Authoritative relational database")]
+    DB -->|"committed result"| API
+    API -->|"accepted order"| M
+    DB -.->|"outbox relay or CDC"| Q["Durable partitioned stream"]
+    Q -->|"event ID and order version"| W["Notification worker pool"]
+    W -->|"idempotent attempt"| PR["Email or push provider"]
+    W -->|"attempt state"| DB
+    DB -.->|"bounded stale reads"| RR[("Read replica or cache")]
+    API -.->|"safe read path"| RR
+    E -.-> O["Metrics, logs, traces, SLOs"]
+    API -.-> O
+    DB -.-> O
+    Q -.-> O
+    W -.-> O
+  end
+
+  D -.-> E
+  DB -.->|"writer loss: fence, promote, reconcile"| FAIL["Degraded and recovery paths"]
+  Q -.->|"backlog: shed optional work, preserve accepted intent"| FAIL
+  PR -.->|"timeout: retry by event ID, then delayed state"| FAIL
+  E -.->|"overload: priority admission and retry-after"| FAIL
+  FAIL -.-> O
+```
+
+The diagram separates synchronous acceptance from asynchronous provider delivery. The create request has one synchronous durable authority. A provider outage does not require rolling back an accepted order; it creates notification lag that the product can display and operators can repair. The read replica is not used for an immediate read-after-write response unless the application can prove it has replayed the required position.
+
+### Normal request trace
+
+1. The edge authenticates the caller, derives tenant identity, applies the tenant and global admission limits, and forwards a request ID, operation ID, and deadline.
+2. The API validates the payload and begins one database transaction.
+3. It attempts to insert the tenant-scoped operation record. An existing matching fingerprint returns the stored result; a mismatched fingerprint returns an idempotency conflict.
+4. It inserts the order and outbox event, then commits at the configured replicated durability boundary.
+5. The API returns the saved order result without waiting for the notification provider.
+6. The relay publishes the outbox event at least once to a partition chosen by order ID.
+7. A worker claims the event, calls the provider with a stable attempt identity, and stores the known outcome.
+8. User-visible status distinguishes accepted, dispatching, dispatched, delivered when supported, delayed, and terminal failure rather than calling every intermediate state “sent.”
+
+### Failure and overload trace
+
+If the database commits but the API reply is lost, the client retries the same operation ID. The saved operation row returns the first order instead of creating a second one. If commit outcome is still unknown during failover, the API looks up that operation after writer routing stabilizes.
+
+If the notification provider times out, the worker cannot infer whether the provider accepted the request. It records an ambiguous attempt and retries only under the provider's idempotency contract. Without that contract, the product must admit that duplicate external dispatch is possible and bound the retry policy accordingly.
+
+If peak admission exceeds 5,000 creates each second, the edge protects the database pool with bounded queues, per-tenant fairness, and explicit retry responses. It does not let every caller wait until the same one-second deadline and then retry in phase. Accepted orders remain durable while optional reads, bulk work, or low-priority notifications can shed or delay under stated policy.
+
+If the primary Region fails, traffic does not write to both the old and promoted writer. The recovery controller fences the old authority, verifies the candidate's recovery position against the 30-second RPO, promotes, updates routing, and reconciles ambiguous operations. A 15-minute RTO includes detection, decision, promotion, connection recovery, validation, and traffic ramp, not only the database promotion command.
+
+### Decision recap
+
+| Choice                                            | Requirement behind it                                            | Limit and signal                                             | Revisit when                                                         |
+| ------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| Tenant-scoped idempotency row                     | Lost replies must not duplicate orders                           | Unique conflicts, replay count, retained-key bytes           | Retry horizon or operation volume changes materially                 |
+| Relational authority and local outbox transaction | Order transition and intent to notify commit together            | Commit p99, lock wait, WAL rate, old transactions            | One writer or shard cannot meet measured peak with headroom          |
+| Async notification stream                         | Provider work can finish after acceptance and must absorb bursts | Oldest event age, partition skew, retry and dead-letter rate | Dispatch SLO or event size exceeds queue design                      |
+| Partition by order identity                       | Preserve per-order transition order while parallelizing orders   | Hot partition share and consumer lag                         | One customer or order dominates a partition                          |
+| Read replica only for declared stale paths        | Replica replay can lag an accepted write                         | Replay position and user-visible stale rate                  | Stronger read-after-write becomes a product requirement              |
+| Active-passive regional writer                    | Avoid conflicting order histories under partition                | RPO position, fence evidence, failover drill time            | Product requires active-active writes and defines conflict semantics |
+
+The interview recap should state the unresolved facts, not pretend the design is finished. Here they are hottest-tenant share, provider idempotency support, measured row and index bytes, sustained database commit rate, and replica catch-up capacity. Each one maps to a load test, provider contract review, or failover drill.
+
 ## Summary
 
 A useful design starts as a measurable contract, not a diagram. State the user actions, correctness rules, scale, latency, availability, durability, and fixed constraints; then use arithmetic and boundary-level telemetry to find the few assumptions that can change the architecture.
@@ -164,6 +292,8 @@ A useful design starts as a measurable contract, not a diagram. State the user a
 - **Carry concrete values through the design.** Forty-eight million daily views average about 556 RPS; at a 4x peak and 24 KiB responses, the peak response payload is about 54.6 MB/s before protocol overhead and compression.
 - **Test sensitivity before choosing components.** Label inputs as measured, promised, or assumed. Recalculate with plausible low and high values, especially for peaks, payloads, tenant skew, retention, and fan-out.
 - **Diagnose the contract itself.** Compare edge attempts with admitted application requests, split latency by operation and response class, and plot queue time and saturation beside service time. A healthy application metric can coexist with user-visible failure when the measurement boundary is wrong.
+- **Use time to expose evidence.** Move from boundary to requirements, arithmetic, interface and data, architecture, one deep mechanism, failure traces, and a decision recap. Narrate assumptions so the interviewer can redirect them early.
+- **Finish one complete path.** The running case commits an order, idempotency result, and outbox event together, then dispatches asynchronously. Its retry, overload, provider timeout, and regional failover all reuse the same boxes and name their degraded behavior.
 
 ## References
 

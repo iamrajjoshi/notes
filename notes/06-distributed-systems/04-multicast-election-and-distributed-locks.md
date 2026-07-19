@@ -1,11 +1,9 @@
 ---
 title: Order Group Messages, Elect Authority, and Exclude Stale Workers
-shortTitle: Group communication and coordination
 description: Build from multicast delivery order to reliable views, leader election, distributed mutual exclusion, leases, and fencing without mistaking suspicion for authority.
-collection: distributed-systems
 slug: multicast-election-and-distributed-locks
 order: 4
-number: DS4
+identifier: DS4
 duration: 3 hours
 difficulty: Advanced
 tags:
@@ -22,18 +20,6 @@ tags:
 ## Working model
 
 A message can arrive before it is safe to expose, a process can look dead while it is only slow, and an old leader can continue running after a replacement is elected. Ordering controls delivery, election chooses a coordinator under stated assumptions, and fencing makes the protected resource reject stale authority.
-
-## Questions this note answers
-
-- Distinguish unicast, broadcast, and multicast before discussing group protocols
-- Separate receiving a message from delivering it to application code
-- Compare first-in, first-out (FIFO), causal, and total delivery order with concrete histories
-- Explain what reliable multicast and virtual synchrony add, and where their guarantees stop
-- Treat ring and Bully elections as historical algorithms with restrictive failure assumptions
-- Explain why a missed crash is primarily a liveness problem while false suspicion can become a safety problem
-- Trace Ricart-Agrawala and Maekawa distributed mutual exclusion
-- Separate leader election, a time-bounded lease, and a monotonic fencing token
-- Diagnose stalled progress without weakening the authority rule
 
 ## Start with the shape of one communication
 

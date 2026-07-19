@@ -1,11 +1,9 @@
 ---
 title: Single-node inference optimization
-shortTitle: Node optimization
 description: Tune request scheduling, KV allocation, attention kernels, graph replay, precision, and speculative work against a stated latency target.
-collection: ai-inference
 slug: single-node-optimization
 order: 5
-number: AI5
+identifier: AI5
 duration: 140 min
 difficulty: Advanced
 tags:
@@ -19,17 +17,9 @@ tags:
 
 A node is one server with CPUs, memory, network interfaces, and one or more GPUs. Tuning that node is a packing problem under deadlines: the scheduler groups request phases, the cache manager places KV blocks, and kernels group useful arithmetic into each device pass. A change that helps one layer can hurt another.
 
-## Questions this note answers
-
-- Compare static, continuous, and chunked-prefill scheduling
-- Explain block-based KV allocation and prefix-cache correctness
-- State what FlashAttention and CUDA graphs reduce
-- Evaluate quantization through speed, memory, kernel support, and quality
-- Explain speculative decoding's acceptance-dependent trade
-
 ## Optimize a measured service, not a list of features
 
-Write the failing objective first. It might be p95 time to first token, token cadence, maximum safe concurrency, energy per useful token, or the ability to fit one model. Those goals can disagree: a larger batch may raise total tokens per second while delaying an individual request, and lower-precision weights may free memory while failing a quality check.
+Start with a measurable objective. It might be p95 time to first token, token cadence, maximum safe concurrency, energy per useful token, or the ability to fit one model. Those goals can disagree: a larger batch may raise total tokens per second while delaying an individual request, and lower-precision weights may free memory while failing a quality check.
 
 Build a plain baseline with the exact model bundle, hardware, request distribution, offered load, and latency limits. Split its trace into queue, prefill, decode, delivery, CPU, device, and communication time. Only then choose a mechanism aimed at the measured limit:
 

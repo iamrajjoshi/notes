@@ -1,11 +1,9 @@
 ---
 title: Failure Detection, Gossip, and Membership
-shortTitle: Failure detection and membership
 description: Turn silence into bounded suspicion, spread updates without a central broadcaster, and maintain a useful membership view when processes pause, crash, recover, or disagree.
-collection: distributed-systems
 slug: failure-detection-gossip-membership
 order: 3
-number: DS3
+identifier: DS3
 duration: 3 hours
 difficulty: Core
 tags:
@@ -20,17 +18,6 @@ tags:
 ## Working model
 
 A membership list is a replicated, changing opinion about which process identities are reachable. Timeouts create suspicion, probes gather more evidence, and gossip spreads that evidence; none of them turns silence into certain proof of a crash.
-
-## Questions this note answers
-
-- Explain why a slow process, a broken path, and a crashed process can look identical to an observer
-- Separate completeness, accuracy, detection time, and per-member load
-- Compare centralized, ring, all-to-all, and gossip-based heartbeating
-- Trace push, pull, and push-pull dissemination under their random-mixing assumptions
-- Follow one Scalable Weakly-consistent Infection-style Process Group Membership (SWIM) direct probe, indirect probe, and piggybacked membership update
-- Explain suspicion, incarnation numbers, refutation, and failed-member tombstones
-- Distinguish weakly consistent gossip membership from a consensus-backed authoritative catalog
-- Diagnose false suspicions using scheduler, network, and protocol evidence
 
 ## Membership starts with identity, not health
 

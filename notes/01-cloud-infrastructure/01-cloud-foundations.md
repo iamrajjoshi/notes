@@ -1,11 +1,9 @@
 ---
 title: "Cloud foundations: failure domains, identity, and traffic"
-shortTitle: Cloud foundations
 description: Map AWS compute, failure domains, networks, identity, load balancers, storage, and encryption before adding Kubernetes.
-collection: cloud-infrastructure
 slug: cloud-foundations
 order: 1
-number: CI1
+identifier: CI1
 duration: 190 min
 difficulty: Foundation
 tags:
@@ -20,16 +18,6 @@ tags:
 ## Working model
 
 A cloud system is a set of failure boundaries joined by explicit identity and network decisions. Draw those boundaries before naming services.
-
-## Questions this note answers
-
-- Separate a region, Availability Zone, VPC, subnet, and workload cell
-- Trace a browser request through DNS, an IP route, transport, TLS, HTTP, and a load balancer
-- Define EC2, Auto Scaling, Lambda, ECS, EKS, Fargate, ELB, S3, EBS, and RDS before using them
-- Trace ingress and egress through DNS, routes, gateways, and security controls
-- Read an IAM decision as principal, action, resource, and condition
-- Choose among object, block, and relational storage for a stated failure model
-- Choose between an ALB-backed EC2 fleet and an API Gateway-backed Lambda function for a stated workload
 
 ## Begin with one service, not with AWS names
 
@@ -68,24 +56,26 @@ That zonal subnet fact explains why a multi-zone service needs subnets, addresse
 
 A cell adds an application boundary on top of cloud boundaries. Cells can limit customer impact, deployment risk, and database contention, but they also create routing and data-placement work. Multi-zone and multi-cell solve different problems.
 
-> **Fictional case.** The bookshop used throughout these notes places customers into one of two workload cells. Each cell has its own compute, deployment cohort, and database partition. The names and values describe only this teaching example.
+> **Fictional case.** The bookshop used throughout these notes places customers into one of two workload cells. Each cell has its own compute, deployment cohort, and database partition. The names and values belong only to this worked example.
 
 ## Start with the AWS service map
 
 AWS service names make more sense when separated into three layers: the program being run, the scheduler or scaling control plane, and the machine or managed runtime that supplies compute.
 
-| Service                          | Contract                                                                                                                                                   | What it does not decide for you                                                                  |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| EC2 (Elastic Compute Cloud)      | A virtual machine chosen from an Amazon Machine Image (AMI) and instance type                                                                              | Application rollout, process supervision, and multi-zone placement                               |
-| EC2 Auto Scaling group           | Maintains a minimum, desired, and maximum EC2 fleet from a launch template; replaces instances that fail its health policy                                 | Container scheduling or application-level recovery                                               |
-| Lambda                           | Runs a function in managed execution environments in response to invocations or events; concurrency drives scaling                                         | Long-lived host administration or a general container scheduler                                  |
-| ECS (Elastic Container Service)  | AWS-native container orchestration. A task definition is the versioned blueprint, a task is one running copy, and a service maintains a desired task count | The underlying compute choice; tasks can use Fargate, managed instances, or EC2 capacity         |
-| EKS (Elastic Kubernetes Service) | A managed Kubernetes control plane that exposes the Kubernetes API                                                                                         | Most workload, policy, data-plane, and application decisions; Chapter 6 draws the exact boundary |
-| Fargate                          | Managed compute for supported ECS tasks or EKS Pods                                                                                                        | Orchestration. ECS or EKS still decides what should run                                          |
+| Service                          | Contract                                                                                                                                                   | What it does not decide for you                                                                                 |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| EC2 (Elastic Compute Cloud)      | A virtual machine chosen from an Amazon Machine Image (AMI) and instance type                                                                              | Application rollout, process supervision, and multi-zone placement                                              |
+| EC2 Auto Scaling group           | Maintains a minimum, desired, and maximum EC2 fleet from a launch template; replaces instances that fail its health policy                                 | Container scheduling or application-level recovery                                                              |
+| Lambda                           | Runs a function in managed execution environments in response to invocations or events; concurrency drives scaling                                         | Long-lived host administration or a general container scheduler                                                 |
+| ECS (Elastic Container Service)  | AWS-native container orchestration. A task definition is the versioned blueprint, a task is one running copy, and a service maintains a desired task count | The underlying compute choice; tasks can use Fargate, managed instances, or EC2 capacity                        |
+| EKS (Elastic Kubernetes Service) | A managed Kubernetes control plane that exposes the Kubernetes API                                                                                         | Most workload, policy, data-plane, and application decisions; [CI6](06-eks-and-ecs.md) draws the exact boundary |
+| Fargate                          | Managed compute for supported ECS tasks or EKS Pods                                                                                                        | Orchestration. ECS or EKS still decides what should run                                                         |
 
 Elastic Load Balancing (ELB) is another family rather than one interchangeable product. An Application Load Balancer (ALB) terminates and routes HTTP or HTTPS using layer-7 rules. A Network Load Balancer (NLB) handles high-throughput TCP, UDP, or TLS flows at layer 4. A Gateway Load Balancer (GWLB) inserts network appliances such as firewalls; it is not the ordinary front door for an HTTP application. Classic Load Balancers remain for old deployments, but new designs normally start with ALB or NLB.
 
-Storage has a similar split. Amazon Simple Storage Service (S3) is an object API, not a mounted disk. Elastic Block Store (EBS) supplies a block device in one Availability Zone. Relational Database Service (RDS) operates a relational database engine. Elastic File System (EFS) supplies a shared network filesystem when POSIX file access and concurrent mounts are part of the requirement. Start with the access contract rather than asking which service is most managed.
+Storage has a similar split. Amazon Simple Storage Service (S3) is an object API, not a mounted disk. Elastic Block Store (EBS) supplies a block device in one Availability Zone. Relational Database Service (RDS) operates a relational database engine. Elastic File System (EFS) supplies a shared network filesystem when POSIX-style path, open, read, write, rename, permission, and concurrent-mount behavior is part of the requirement. Start with the access contract rather than asking which service is most managed.
+
+A block device exposes numbered byte ranges for reads and writes; a filesystem or database supplies higher-level names, records, and recovery rules above it. [LL4: Linux storage and I/O](../02-low-level-infrastructure/04-storage-and-io.md) follows that stack when the host-side mechanism matters.
 
 _The orchestrator and compute layer are separate choices._
 
@@ -104,13 +94,15 @@ Suppose the orders API is a long-running process that listens on port `8080`. Th
 
 These are several resources with separate jobs. The launch template describes how to create an instance. The Auto Scaling group decides how many instances should exist and in which subnets. The target group records which instances can receive traffic. The ALB listener accepts client connections and selects a healthy target.
 
+An Amazon Machine Image (AMI) supplies the bootable operating-system and filesystem image. A launch template versions the instance type, image, network, storage, and identity settings used for new EC2 instances. A security group is a stateful network filter attached to an AWS network interface. An instance profile attaches an IAM role to EC2 so software can obtain temporary role credentials without storing long-lived access keys in the image.
+
 ### Deploy the fleet
 
 1. Build the application and its fixed dependencies into an AMI. Create launch-template version `18` that selects that AMI, the instance type, the instance security group, and an IAM instance profile. Do not bake long-lived AWS credentials into the image.
 2. Configure the Auto Scaling group to span private subnets in both zones and attach its target group. The group launches four instances from the template and registers them with the target group.
 3. Allow client HTTPS to the ALB security group. Allow port `8080` on the instance security group only from the ALB security group. Network permission does not grant the instance role permission to call S3, KMS, or RDS APIs.
 4. Wait for each new instance to boot the process and pass the target-group health check. `InService` in the Auto Scaling group and `healthy` in the target group answer different questions; record both.
-5. For release `19`, build another AMI and launch-template version. Start an instance refresh with explicit healthy-capacity settings, checkpoints, and bake time. Merely changing the template used for future launches does not replace every existing instance. A refresh rolls the new configuration through the current fleet. When its prerequisites are met, instance refresh can automatically roll back after replacement errors or selected CloudWatch alarms.
+5. For release `19`, build another AMI and launch-template version. Start an instance refresh with explicit healthy-capacity settings, checkpoints, and bake time. Merely changing the template used for future launches does not replace every existing instance. A refresh rolls the new configuration through the current fleet. When its prerequisites are met, instance refresh can automatically roll back after replacement errors or selected CloudWatch alarms, which evaluate AWS metrics against declared thresholds.
 
 ### Trace one request
 
@@ -128,9 +120,9 @@ client
 
 The ALB health check controls routing. If one instance starts returning the wrong status on `/ready` while other healthy targets remain, the target becomes unhealthy and stops receiving ordinary requests. If every target is unhealthy, ALB fail-open behavior can route to all of them, so “removed from rotation” is not an absolute availability boundary. Target failure alone does not guarantee instance replacement. Configure the Auto Scaling group to use Elastic Load Balancing health checks when target failure should also make the group replace the instance. Otherwise, the group can still consider an EC2-running instance healthy while the ALB refuses to route to it.
 
-A target-tracking policy can adjust desired capacity from a metric such as ALB request count per target or average CPU. It cannot create ready capacity immediately. Instance launch, process startup, health checks, and scaling cooldown or warmup all add delay. The maximum of `12` is a hard policy ceiling until someone changes it, and subnet addresses, EC2 quotas, zonal instance capacity, database connections, and downstream throughput can stop useful scaling before that number.
+A target-tracking policy can adjust desired capacity from a metric such as ALB request count per target or average CPU. It cannot create ready capacity immediately. Instance launch, process startup, health checks, and scaling cooldown or warmup all add delay: cooldown suppresses selected new scaling actions for an interval, while instance warmup excludes new capacity from parts of the scaling calculation until it can contribute. The maximum of `12` is a hard policy ceiling until someone changes it, and subnet addresses, EC2 quotas, zonal instance capacity, database connections, and downstream throughput can stop useful scaling before that number.
 
-Treat each instance as replaceable. Store orders in a durable database, objects in S3, and shared session or coordination state outside local process memory. An attached disk can persist bytes according to its own lifecycle policy, but one instance-local disk is not a multi-zone state design. During scale-in or refresh, deregistration and its delay protect in-flight connections only for the configured interval; clients still need bounded timeouts and safe retries.
+Treat each instance as replaceable. Store orders in a durable database, objects in S3, and shared session or coordination state outside local process memory. An attached disk can persist bytes according to its own lifecycle policy, but one instance-local disk is not a multi-zone state design. During scale-in or refresh, target deregistration stops new connections and its configured delay gives existing connections a bounded drain interval; clients still need bounded timeouts and safe retries.
 
 ### Read failure evidence by owner
 

@@ -1,11 +1,9 @@
 ---
 title: Distributed inference and topology
-shortTitle: Distributed serving
 description: Place model state and request work across GPUs without treating parallelism as free capacity.
-collection: ai-inference
 slug: distributed-inference
 order: 6
-number: AI6
+identifier: AI6
 duration: 145 min
 difficulty: Advanced
 tags:
@@ -18,14 +16,6 @@ tags:
 ## Working model
 
 Distributed inference uses more than one GPU process for a model or fleet. It can make an oversized model fit or serve more independent traffic, but every split adds some combination of copied state, communication, waiting, and a wider failure boundary.
-
-## Questions this note answers
-
-- Distinguish data, tensor, pipeline, expert, and context parallelism
-- Match all-reduce, all-gather, reduce-scatter, and all-to-all to model communication
-- Explain why NVLink, PCIe, NIC, and NUMA placement alter a parallel plan
-- Evaluate disaggregated prefill and decode through transfer and queue costs
-- Identify stragglers and replicated state in a distributed serving design
 
 ## Distribute only for a named constraint
 
@@ -113,7 +103,7 @@ Collective participants wait at synchronization points. A rank delayed by a slow
 
 Attach rank, node, device, process group, model shard, and request batch identifiers to traces without exposing tenant data. Compare per-rank arrival time at the collective, collective duration, bytes, chosen transport, GPU kernel time, device error counters, and link throughput. Verify the actual rank-to-device and device-to-NIC map. For disaggregated prefill, also trace KV transfer queue, bytes, serialization, destination allocation, and retry ownership. Recovery needs a bounded timeout and a rule for whether the whole parallel group restarts, a request is retried elsewhere, or work is rejected to preserve capacity.
 
-Recent NCCL releases expose a RAS subsystem that can report communicator and rank status, operation-count mismatches, incomplete peers, and dead processes. Treat that output as versioned diagnostic evidence rather than a replacement for request and per-rank traces; a communicator can be healthy while one rank consistently arrives late.
+Recent NCCL releases expose a reliability, availability, and serviceability (RAS) subsystem that can report communicator and rank status, operation-count mismatches, incomplete peers, and dead processes. Treat that output as versioned diagnostic evidence rather than a replacement for request and per-rank traces; a communicator can be healthy while one rank consistently arrives late.
 
 - Symmetric slowdown across ranks suggests a shared link or collective shape.
 - One consistently late rank suggests placement, device, host, or local contention.

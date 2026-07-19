@@ -1,11 +1,9 @@
 ---
-title: Block storage and io_uring
-shortTitle: Storage and I/O
+title: Linux storage and I/O
 description: Separate block devices, filesystems, caches, and completion APIs so storage latency stops looking like one opaque number.
-collection: low-level-infrastructure
 slug: storage-and-io
 order: 4
-number: LL4
+identifier: LL4
 duration: 145 min
 difficulty: Core
 tags:
@@ -18,17 +16,6 @@ tags:
 ## Working model
 
 Storage is a stack of queues and caches. An application operation may finish after a memory copy, after filesystem metadata work, or only after a device reports durable completion; the API and flags decide which milestone counts.
-
-## Questions this note answers
-
-- Trace a file operation through VFS, filesystem, page cache, block layer, and device
-- Separate a pathname, mount, dentry, inode, open file description, and file descriptor
-- Choose between buffered I/O, direct I/O, and mmap for a stated access pattern
-- Explain durability boundaries around writeback and fsync
-- Relate SSD, NVMe, partitions, device mapper or LVM, RAID, filesystems, and application I/O without collapsing their contracts
-- Calculate how latency, request size, queue depth, IOPS, and throughput constrain one another
-- Compare a blocking syscall, readiness notification, worker pool, and completion API
-- Trace an io_uring SQE through submission, CQE handling, cancellation, and feature probing
 
 ## Start with the persistence promise
 
@@ -131,7 +118,7 @@ This is a relationship among measured averages, not a device guarantee. A config
 
 Deeper queues let controllers and devices reorder work and keep parallel resources busy. Throughput can rise until some layer saturates. Beyond that point, added work mostly waits: average latency grows, and p95 or p99 can rise much faster when garbage collection, writeback, parity work, cache misses, cloud throttling, or a slow member creates a long service-time tail. Report queueing time separately from device service time when the tools allow it.
 
-A benchmark result belongs to its boundary. Record whether the clock starts in the application, filesystem, kernel block layer, guest device, or provider; whether data is cache-hot or exceeds every relevant cache; buffered versus direct I/O; read/write ratio; random or sequential addresses; request-size distribution; jobs and actual outstanding operations; sync, `fsync`, flush, or FUA behavior; dataset size and preconditioning; test duration and warm-up; device fill level; CPU and NUMA placement; RAID degraded state; and cloud volume limits or credits. Report throughput, IOPS, mean latency, and latency percentiles together. A single peak IOPS number cannot be transferred to a different request shape or durability contract.
+A benchmark result belongs to its boundary. Record whether the clock starts in the application, filesystem, kernel block layer, guest device, or provider; whether data is cache-hot or exceeds every relevant cache; buffered versus direct I/O; read/write ratio; random or sequential addresses; request-size distribution; jobs and actual outstanding operations; sync, `fsync`, flush, or Force Unit Access (FUA) behavior, which asks a supporting device to place that command's data on non-volatile media before completing it; dataset size and preconditioning; test duration and warm-up; device fill level; CPU and NUMA placement; RAID degraded state; and cloud volume limits or credits. Report throughput, IOPS, mean latency, and latency percentiles together. A single peak IOPS number cannot be transferred to a different request shape or durability contract.
 
 ## The page cache is indexed by file and offset
 

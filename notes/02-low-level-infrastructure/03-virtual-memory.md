@@ -1,11 +1,9 @@
 ---
 title: Virtual memory and page faults
-shortTitle: Virtual memory
 description: Trace an address through page tables and the page cache, then decide when huge pages or user-space fault handling solve a real problem.
-collection: low-level-infrastructure
 slug: virtual-memory
 order: 3
-number: LL3
+identifier: LL3
 duration: 140 min
 difficulty: Core
 tags:
@@ -18,14 +16,6 @@ tags:
 ## Working model
 
 A virtual address is a claim, not a resident byte. Page tables describe where that claim currently points; faults give the kernel, or an authorized user-space handler, a chance to supply or reject the page.
-
-## Questions this note answers
-
-- Trace a virtual address through a TLB lookup, page table, and page fault
-- Separate reserved address space, mapped pages, resident frames, page cache, and swap
-- Explain anonymous, file-backed, shared, private, and copy-on-write mappings
-- Compare HugeTLB and transparent huge pages without assuming either is always faster
-- Describe how userfaultfd moves selected page-fault handling into user space
 
 ## Translate one memory access before discussing pressure
 
@@ -47,9 +37,11 @@ instruction uses virtual address
 
 ## Allocation can precede physical memory
 
-A process issues virtual addresses. The CPU checks its TLB for a cached translation and otherwise walks page tables that the kernel prepared. A missing or disallowed translation raises a page fault; the kernel may map a zero-filled page, load file data, copy a shared page, or deliver a signal.
+A call such as `malloc` operates across two layers. A user-space allocator may satisfy the request from an arena it already owns. When it needs more address space, it can ask the kernel to extend the process heap or create an anonymous mapping. A successful request usually establishes an accessible virtual range without immediately supplying one physical frame for every page in that range.
 
-A minor fault needs no storage read, while a major fault waits for backing storage. Both can be expensive at scale because they interrupt normal execution and may take memory-management locks.
+Physical memory is commonly supplied on first access. A first write can fault, make the kernel allocate and zero a frame, charge the relevant memory cgroup, and install a writable page-table entry. That later work can stall in reclaim or fail at a cgroup or host out-of-memory boundary even though the earlier allocation call succeeded. Linux overcommit policy controls how strictly the kernel accounts for memory commitments when the virtual range is created; it does not make future physical capacity unlimited.
+
+A minor fault completes without reading the page from storage. A major fault needs storage I/O before the access can continue. Both can be expensive at scale because they interrupt normal execution and may contend on memory-management work, but only a major fault implies the storage wait represented by that classification.
 
 ## mmap connects address ranges to backing objects
 
@@ -88,17 +80,36 @@ The trade is real. Larger pages can waste memory, lengthen allocation or compact
 
 ## Reclaim chooses pages; policy decides where failure lands
 
-Under pressure, the kernel can drop clean file-backed pages and read them again later. Dirty file pages need writeback before reuse. Anonymous pages need swap space or another reclaim mechanism if their contents must survive, so a swapless host can reach an allocation failure while much of its memory belongs to active anonymous mappings.
+Under pressure, the kernel can drop clean file-backed pages and read them again later. Dirty file pages need writeback before reuse. Anonymous pages need swap space—storage used to preserve selected memory pages outside RAM—or another reclaim mechanism if their contents must survive, so a swapless host can reach an allocation failure while much of its memory belongs to active anonymous mappings.
 
 A control group (cgroup) places a set of processes inside a kernel-managed resource-accounting boundary; [LL6](06-containers-and-cgroups.md) explains how the hierarchy is created and populated. Inside that boundary, `memory.high` asks allocating tasks to help reclaim and can produce long stalls without killing them. `memory.max` sets a hard boundary; if reclaim cannot bring usage below it, the cgroup out-of-memory (OOM) path can kill a task according to current policy. Host-wide OOM is a different scope. Read `memory.events`, pressure stall data, swap activity, and the kernel log together before blaming a process with the largest resident set.
 
 ### A free-memory snapshot cannot explain a stall
 
-Page cache, reclaimable slab, dirty limits, cgroup protection, swap state, and allocation order all affect whether the next request can proceed. Capture the allocation scope and pressure timeline rather than treating MemFree as available capacity.
+Page cache, reclaimable slab, dirty limits, cgroup protection, swap state, and allocation order all affect whether the next request can proceed. The slab caches kernel objects and is reclaimable only where the owning cache permits it. Dirty limits bound how much modified file data can wait for writeback before writers must help or pause. Capture the allocation scope and pressure timeline rather than treating MemFree as available capacity.
 
 [Linux kernel: memory management concepts](https://docs.kernel.org/admin-guide/mm/concepts.html)
 
-## userfaultfd turns selected faults into a negotiated protocol
+## Read mappings, faults, and pressure as one timeline
+
+`/proc/<pid>/maps` shows ranges and permissions, while `smaps` or `smaps_rollup` adds resident, proportional, anonymous, file, swap, and huge-page accounting supported by the running kernel. Those files are observations, not an allocation ledger: a reserved virtual range can have little resident memory, and shared pages can appear in several processes.
+
+Minor and major fault counters accumulate over a task's life. Measure their change during a bounded workload, record whether file data was already cached, and pair the result with latency. System-wide `/proc/vmstat` and Pressure Stall Information (PSI) show reclaim, compaction, swap, and time stalled under pressure; a container also needs its cgroup's memory.current, memory.events, and pressure file. One counter rising near the incident does not prove causation, so align samples on a monotonic clock and retain the workload phase.
+
+_Field availability and performance-counter names vary. Record the kernel and tool versions with the sample._
+
+```shell
+cat /proc/PID/maps
+cat /proc/PID/smaps_rollup
+awk '{print $10, $12}' /proc/PID/stat
+cat /proc/vmstat
+cat /proc/pressure/memory
+perf stat -e page-faults,minor-faults,major-faults -- ./workload
+```
+
+## Advanced: userfaultfd turns selected faults into a negotiated protocol
+
+The core memory path above ends with mapping and pressure evidence. This optional section follows a specialized API that lets user space handle selected page faults, including post-copy migration paths.
 
 A monitor opens userfaultfd, negotiates UFFDIO_API features, and registers an address range in modes the running kernel and mapping type support. MISSING reports access to absent pages, MINOR reports a supported page that exists in backing storage or cache but lacks this process's page-table entry, and WP reports writes to pages protected through userfaultfd.
 
@@ -116,39 +127,24 @@ Another thread can populate, unmap, remove, or remap the range while the monitor
 
 Post-copy resumes execution before all memory arrives, so a missing page can block on the source, transport, decompressor, and handler. Keep the source or a recoverable checkpoint until transfer finishes, bound handler queues, and define what happens when the source disappears mid-restore.
 
-## Read mappings, faults, and pressure as one timeline
-
-`/proc/<pid>/maps` shows ranges and permissions, while `smaps` or `smaps_rollup` adds resident, proportional, anonymous, file, swap, and huge-page accounting supported by the running kernel. Those files are observations, not an allocation ledger: a reserved virtual range can have little resident memory, and shared pages can appear in several processes.
-
-Minor and major fault counters accumulate over a task's life. Measure their change during a bounded workload, record whether file data was already cached, and pair the result with latency. System-wide `/proc/vmstat` and PSI show reclaim, compaction, swap, and time stalled under pressure; a container also needs its cgroup's memory.current, memory.events, and pressure file. One counter rising near the incident does not prove causation, so align samples on a monotonic clock and retain the workload phase.
-
-_Field availability and performance-counter names vary. Record the kernel and tool versions with the sample._
-
-```shell
-cat /proc/PID/maps
-cat /proc/PID/smaps_rollup
-awk '{print $10, $12}' /proc/PID/stat
-cat /proc/vmstat
-cat /proc/pressure/memory
-perf stat -e page-faults,minor-faults,major-faults -- ./workload
-```
-
 ## Summary
 
 Virtual memory separates an address-space promise from physical residency. A page fault may allocate, load, copy, wait, or reject, so a large mapping, high resident set, and memory-pressure stall describe different states rather than one measure of “memory use.”
 
 - The CPU checks the TLB, then page tables. A missing or disallowed translation faults into a path that can supply a zero page, file page, copy-on-write page, or signal.
+- An allocator can reserve virtual address space before physical frames exist. First access can allocate and charge memory later, so an earlier successful allocation does not prove that future touches will fit within cgroup or host capacity.
 - Virtual address space, mappings, and resident RAM are different quantities. A page is a virtual-memory unit; a frame is its possible backing in physical memory.
 - Anonymous and file-backed mappings have different reclaim paths. Private file mappings copy modified pages; shared mappings can expose changes through the shared backing.
 - After fork, parent and child may read one physical frame. The first write can allocate and map a private copy, and that allocation can still fail under NUMA or cgroup policy.
 - Huge pages reduce TLB and page-table work but coarsen allocation, increase waste, and can add compaction latency. HugeTLB reserves explicit non-swappable pages; transparent huge pages are formed by the kernel, with multi-size anonymous THP available only where the running kernel and architecture expose it.
 - Clean file pages can be dropped; dirty pages need writeback; anonymous pages need swap or another recovery path. Memory high can stall tasks in reclaim, while memory max can lead to cgroup OOM.
-- Userfaultfd requires negotiated features and mode-specific resolution. The faulting thread remains blocked until the monitor resolves or wakes it, and mapping changes can race with that resolution.
 - Read maps, resident accounting, fault deltas, reclaim, swap, pressure stalls, cgroup events, and kernel logs on one timeline. Free-memory snapshots alone do not identify the blocked allocation.
+- Userfaultfd requires negotiated features and mode-specific resolution. The faulting thread remains blocked until the monitor resolves or wakes it, and mapping changes can race with that resolution.
 
 ## References
 
 - [Linux kernel: memory management concepts](https://docs.kernel.org/admin-guide/mm/concepts.html)
+- [Linux kernel: overcommit accounting](https://docs.kernel.org/mm/overcommit-accounting.html)
 - [Linux kernel: page tables](https://docs.kernel.org/mm/page_tables.html)
 - [Linux man-pages: mmap(2)](https://man7.org/linux/man-pages/man2/mmap.2.html)
 - [Linux man-pages: msync(2)](https://man7.org/linux/man-pages/man2/msync.2.html)

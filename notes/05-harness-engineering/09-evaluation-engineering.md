@@ -1,11 +1,9 @@
 ---
 title: Evaluation engineering
-shortTitle: Agent evals
 description: Build representative task suites, layered graders, and trace-based diagnostics that can detect regressions without rewarding shortcuts.
-collection: harness-engineering
 slug: evaluation-engineering
 order: 9
-number: HE9
+identifier: HE9
 duration: 150 min
 difficulty: Advanced
 tags:
@@ -20,42 +18,13 @@ tags:
 
 An eval is a measurement system. The task set samples behavior, the environment produces observations, graders convert evidence into scores, and traces explain why the score moved.
 
-## Questions this note answers
-
-- Construct task suites from a defined behavior distribution
-- Distinguish pass@1, pass@k, and pass^k across repeated trials
-- Compare a candidate with a baseline using paired trials and an uncertainty interval
-- Write rubrics that separate outcome, process, safety, and efficiency
-- Combine deterministic graders, model judges, and human review
-- Separate agent failure from infrastructure error under a prewritten rule
-- Build different suites for capability discovery and high-reliability regression checks
-- Measure task success and attack resistance without hiding false refusals
-
 ## Sample the work you intend to trust
 
 Start with a behavior inventory: common tasks, expensive failures, edge conditions, and adversarial inputs. Turn real incidents into sanitized cases, add small synthetic cases for specific invariants, and keep a holdout set away from prompt and harness tuning. Record why each case exists and which capability it measures.
 
 An agent task includes an environment, available tools, initial state, permissions, time or cost budget, and a success contract. Pin mutable dependencies where possible. Seed known nondeterminism, repeat enough runs to see variance, and mark infrastructure failures separately from task failures.
 
-> **Coverage question.** A hundred similar happy paths are one behavior family, not a broad suite. Count distinct decisions and failure modes before counting cases.
-
-## Read repeated trials as a distribution
-
-One pass does not establish a stable property. Let `p` be the probability that one independent trial of one pinned case passes all required gates. Three related metrics answer different product questions:
-
-| Metric   | Question                                   | If the single-trial rate is `p` |
-| -------- | ------------------------------------------ | ------------------------------- |
-| `pass@1` | Does one ordinary attempt succeed?         | `p`                             |
-| `pass@k` | Does at least one of `k` attempts succeed? | `1 - (1 - p)^k`                 |
-| `pass^k` | Do all `k` attempts succeed?               | `p^k`                           |
-
-If `p = 0.75`, then `pass@3 = 1 - 0.25^3 = 98.44%`, while `pass^3 = 0.75^3 = 42.19%`. The first metric rewards search with several chances; the second measures repeatability. A coding assistant that can generate four candidates and run tests may care about `pass@4`. An unattended refund agent usually cares about `pass@1`, hard safety gates, and a reliability measure such as `pass^5`.
-
-The formulas assume attempts have the same success probability and fail independently. Shared caches, reused worktrees, rate limits, provider incidents, or a common bad fixture create correlation, so do not manufacture `pass@10` from one observed `pass@1` number. Run the repeated trials in isolated environments and retain their actual outcomes.
-
-For a finite sample, suppose `n = 10` trials contain `c = 7` passes. `pass@1` is `7/10 = 70%`. The unbiased estimator introduced with HumanEval is `1 - C(n-c, k) / C(n, k)`, where `C(a, b)` counts ways to choose `b` items from `a`. For `k = 3`, this gives `1 - C(3,3)/C(10,3) = 119/120 = 99.17%`. The matching all-success estimator is `C(c,k)/C(n,k) = C(7,3)/C(10,3) = 35/120 = 29.17%`. Ten trials are still a small sample; the calculation does not remove uncertainty.
-
-Keep the full trial distribution. For each case, report passes out of attempts, gate failures, latency, tokens, tool calls, cost, and intervention. Across a suite, average case-level rates so a case with extra retries does not receive more weight by accident. Show latency and cost for every attempted task as well as for accepted tasks; conditioning only on success can make a system that times out often look fast.
+> **Coverage breadth.** A hundred similar happy paths are one behavior family, not a broad suite. Count distinct decisions and failure modes before counting cases.
 
 ## Use several narrow oracles instead of one vague score
 
@@ -94,6 +63,24 @@ hard gates: behavior, write scope, secrets, budget
 rubric: diagnosis quality against reviewed anchors
 report: distribution + trace-linked failures + review queue
 ```
+
+## Read repeated trials as a distribution
+
+One pass does not establish a stable property. Let `p` be the probability that one independent trial of one pinned case passes all required gates. Three related metrics answer different product questions:
+
+| Metric   | Question                                   | If the single-trial rate is `p` |
+| -------- | ------------------------------------------ | ------------------------------- |
+| `pass@1` | Does one ordinary attempt succeed?         | `p`                             |
+| `pass@k` | Does at least one of `k` attempts succeed? | `1 - (1 - p)^k`                 |
+| `pass^k` | Do all `k` attempts succeed?               | `p^k`                           |
+
+If `p = 0.75`, then `pass@3 = 1 - 0.25^3 = 98.44%`, while `pass^3 = 0.75^3 = 42.19%`. The first metric rewards search with several chances; the second measures repeatability. A coding assistant that can generate four candidates and run tests may care about `pass@4`. An unattended refund agent usually cares about `pass@1`, hard safety gates, and a reliability measure such as `pass^5`.
+
+The formulas assume attempts have the same success probability and fail independently. Shared caches, reused worktrees, rate limits, provider incidents, or a common bad fixture create correlation, so do not manufacture `pass@10` from one observed `pass@1` number. Run the repeated trials in isolated environments and retain their actual outcomes.
+
+For a finite sample, suppose `n = 10` trials contain `c = 7` passes. `pass@1` is `7/10 = 70%`. The unbiased estimator introduced with HumanEval is `1 - C(n-c, k) / C(n, k)`, where `C(a, b)` counts ways to choose `b` items from `a`. For `k = 3`, this gives `1 - C(3,3)/C(10,3) = 119/120 = 99.17%`. The matching all-success estimator is `C(c,k)/C(n,k) = C(7,3)/C(10,3) = 35/120 = 29.17%`. Ten trials are still a small sample; the calculation does not remove uncertainty.
+
+Keep the full trial distribution. For each case, report passes out of attempts, gate failures, latency, tokens, tool calls, cost, and intervention. Across a suite, average case-level rates so a case with extra retries does not receive more weight by accident. Show latency and cost for every attempted task as well as for accepted tasks; conditioning only on success can make a system that times out often look fast.
 
 ## Pair baseline and candidate trials before estimating a change
 
@@ -151,13 +138,13 @@ A failure may belong to the agent, harness, tool implementation, environment fix
 
 > **Toy eval trace.** Record retries, transcript repairs, policy denials, step-budget stops, and usage beside the terminal result. Those events show whether a failure came from the model's proposal, host repair, blocked execution, or forced stop.
 
-### Code walk: read a scenario test as an eval case
+### Bundled eval trace: read a scenario test as an eval case
 
-Open `runEvalSuite` in [minimal-harness.mjs](examples/minimal-harness.mjs). It runs scripted models against five visible contracts: accepted work, tenant isolation, uncertain-write reconciliation, argument validation, and the host step limit. No case calls a live model.
+`runEvalSuite` in [minimal-harness.mjs](examples/minimal-harness.mjs) runs scripted models against five visible contracts: accepted work, tenant isolation, uncertain-write reconciliation, argument validation, and the host step limit. No case calls a live model.
 
-Choose the uncertain-write case and record four parts: initial task and store, injected model behavior, expected receipt boundary, and terminal assertion. Then inspect `tests/public-harness.test.mjs` and find the nearby negative controls for cross-tenant authority, malformed arguments, and looping behavior. Run the file twice; because every model response and tool result is scripted, the traces should match.
+The uncertain-write case contains four parts: initial task and store, injected model behavior, expected receipt boundary, and terminal assertion. `tests/public-harness.test.mjs` adds nearby negative controls for cross-tenant authority, malformed arguments, and looping behavior. Because every model response and tool result is scripted, repeated runs should produce matching traces.
 
-Change one assertion in a scratch copy so it accepts the model's final sentence without checking committed state. The reference run may still look successful, but the known-bad case should now expose the grader defect. Restore the state-based assertion before continuing.
+A shallow grader that accepts the model's final sentence without checking committed state would make the reference run look successful while missing the known-bad case. The state-based assertion is therefore part of the evaluator's contract, not incidental test code.
 
 ## Evaluate attacks against the whole deployed path
 

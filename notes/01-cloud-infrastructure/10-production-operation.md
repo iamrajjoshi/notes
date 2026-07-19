@@ -1,11 +1,9 @@
 ---
 title: "Production operation: reliability, observability, and capacity"
-shortTitle: Production operation
 description: Define service evidence, tune autoscaling, plan capacity and recovery, and review a production system in a fixed order.
-collection: cloud-infrastructure
 slug: production-operation
 order: 10
-number: CI10
+identifier: CI10
 duration: 80 min
 difficulty: Advanced
 tags:
@@ -21,17 +19,20 @@ tags:
 
 Production is a set of nested feedback loops. Work creates demand, controllers adjust supply, telemetry reports service behavior, and operators decide when to continue, halt, degrade, recover, or change the design.
 
-## Questions this note answers
+## Define “good” before choosing dashboards
 
-- Design an autoscaling loop around a demand signal, a delay, and a downstream budget
-- Define service indicators, objectives, error budgets, and tests before choosing dashboards
-- Correlate metrics, traces, and logs across synchronous and asynchronous work
-- Use cells to compare a failing cohort with an unaffected peer
-- Separate high availability, disaster recovery, RTO, and RPO
-- Turn traffic, service quotas, database limits, and rollout surge into a capacity plan
-- Relate useful work to cost and energy without treating utilization as an energy meter
-- Review a cloud design in a repeatable order
-- Apply the operating model to a complete fictional service
+A service-level indicator (SLI) is a measured property of service behavior, such as the fraction of eligible requests that succeed or the fraction that finish within a latency threshold. A service-level objective (SLO) sets the target over a window. An error budget is the allowed miss: a 99.9 percent success objective over 30 days permits 0.1 percent of eligible requests to fail under that definition. The exact numerator, denominator, exclusions, and measurement point belong in the contract.
+
+Use more than an average. Request rate, error rate, latency distributions, and saturation show different failure shapes. A p99 latency of 400 ms means 99 percent of measured requests completed at or below 400 ms under that sample definition; it does not describe the slowest request or explain why the tail grew. Queue age, database wait, memory pressure, and dependency budgets often expose saturation earlier than host CPU.
+
+Tests answer narrower questions:
+
+- A load test checks a stated traffic and data shape against latency and error objectives.
+- A stress test keeps increasing pressure to find the first exhausted boundary and the degraded behavior after it.
+- A soak test holds realistic work long enough to expose leaks, compaction, queue growth, or slow resource exhaustion.
+- A failure exercise removes a dependency, node, zone path, credential, or recovery component to test detection and repair. A disaster-recovery exercise must also prove restored data meets RPO and service returns within RTO.
+
+Keep versions, topology, dataset, request mix, cache state, duration, and client behavior with the result. One clean synthetic run does not establish production readiness for a different load shape.
 
 ## Autoscaling is a delayed control loop
 
@@ -50,21 +51,6 @@ total response delay = metric delay + scaling decision + Pod start + node supply
 ```
 
 A safe test changes one input at a time. Increase offered work, record the demand metric and desired replicas, then measure when new capacity becomes ready and when user latency recovers. Repeat during a rollout and a node loss; the steady-state graph does not expose those overlapping demands.
-
-## Define “good” before choosing dashboards
-
-A service-level indicator (SLI) is a measured property of service behavior, such as the fraction of eligible requests that succeed or the fraction that finish within a latency threshold. A service-level objective (SLO) sets the target over a window. An error budget is the allowed miss: a 99.9 percent success objective over 30 days permits 0.1 percent of eligible requests to fail under that definition. The exact numerator, denominator, exclusions, and measurement point belong in the contract.
-
-Use more than an average. Request rate, error rate, latency distributions, and saturation show different failure shapes. A p99 latency of 400 ms means 99 percent of measured requests completed at or below 400 ms under that sample definition; it does not describe the slowest request or explain why the tail grew. Queue age, database wait, memory pressure, and dependency budgets often expose saturation earlier than host CPU.
-
-Tests answer narrower questions:
-
-- A load test checks a stated traffic and data shape against latency and error objectives.
-- A stress test keeps increasing pressure to find the first exhausted boundary and the degraded behavior after it.
-- A soak test holds realistic work long enough to expose leaks, compaction, queue growth, or slow resource exhaustion.
-- A failure exercise removes a dependency, node, zone path, credential, or recovery component to test detection and repair. A disaster-recovery exercise must also prove restored data meets RPO and service returns within RTO.
-
-Keep versions, topology, dataset, request mix, cache state, duration, and client behavior with the result. One clean synthetic run does not establish production readiness for a different load shape.
 
 ## Metrics find the shape; traces and logs find the instance
 
@@ -135,7 +121,7 @@ An answer does not need every AWS product. It needs one coherent path with named
 
 ## Fictional case: compare one cell and its scaling loop
 
-The bookshop has two independently deployed cells. DNS and an Application Load Balancer route a customer's requests to the assigned cell. Inside each cell, a Kubernetes Service sends traffic to `storefront-api` Pods, while an `export-worker` Deployment drains that cell's queue. This model and every value below exist only for the exercise.
+The bookshop has two independently deployed cells. DNS and an Application Load Balancer route a customer's requests to the assigned cell. Inside each cell, a Kubernetes Service sends traffic to `storefront-api` Pods, while an `export-worker` Deployment drains that cell's queue. This model and every value below exist only in this fictional example.
 
 Suppose cell A's oldest export is 12 minutes old while cell B remains below 40 seconds. The worker HPA reads an external queue-age metric every 30 seconds and targets 60 seconds, with a range of 2 to 20 replicas. Karpenter can add nodes when new Pods remain Pending. The database permits 80 worker connections per cell, and each worker Pod can open four, so 20 replicas already consume the full worker allocation before rollout surge. The HPA maximum and database budget describe the same ceiling from different sides.
 
@@ -145,8 +131,8 @@ Start with the cell comparison. Check metric freshness, desired and ready replic
 
 Production operation starts with a service contract and measures whether the running system still meets it. Scaling, alerts, recovery, and efficiency decisions must point to user behavior and a named resource boundary.
 
-- Autoscaling includes metric delay, decision policy, Pod startup, node supply, and downstream capacity. Desired replicas are only one state in the loop.
 - Define the SLI population and threshold before the SLO. Keep workload shape, topology, dataset, version, and duration with every test result.
+- Autoscaling includes metric delay, decision policy, Pod startup, node supply, and downstream capacity. Desired replicas are only one state in the loop.
 - Metrics show population shape, traces follow one causal path, and logs retain discrete context. Stable operation IDs join retries that do not share one trace.
 - Cells limit impact only when routing, compute, state, and deployment ownership respect the boundary. Preserve a healthy peer as an incident comparison.
 - Multi-AZ availability and regional recovery address different failures. State RTO and RPO, protect recovery points from replicated corruption, and test traffic movement and failback.

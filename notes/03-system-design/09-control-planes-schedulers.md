@@ -1,11 +1,9 @@
 ---
 title: Build Control Planes and Schedulers
-shortTitle: Control planes and schedulers
 description: Model desired state, reconciliation, leases, and placement as separate control-plane concerns; then schedule multi-resource workloads with explicit feasibility, packing, fairness, and interference policy.
-collection: system-design
 slug: control-planes-schedulers
 order: 9
-number: SD9
+identifier: SD9
 duration: 3 hours
 difficulty: Advanced
 tags:
@@ -21,17 +19,7 @@ tags:
 
 A controller repeatedly closes the gap between observed and desired state. A scheduler chooses where the next piece can run; it filters impossible placements, scores the survivors, records the decision, and expects reality to change immediately afterward.
 
-## Questions this note answers
-
-- Distinguish a control plane that decides and records intent from a data plane that performs user work
-- Trace a Kubernetes Deployment from API write through reconciliation, scheduling, node start, and readiness
-- Define Pod, Node, Deployment, ReplicaSet, scheduler, kubelet, Service, request, and limit before using them
-- Separate a durable desired-state API from reconciling controllers and data-plane work
-- Make reconciliation idempotent under duplicate events and controller restarts
-- Apply filter, score, reserve, and bind stages to a placement problem
-- Calculate CPU and memory packing rather than averaging unlike resources
-- Separate workload autoscaling from placement and node-capacity scaling
-- Explain dominant-resource fairness and detect noisy-neighbor pressure
+[DS8](../06-distributed-systems/08-distributed-dataflow-and-scheduling.md) develops dataflow scheduling and shared-cluster resource policy. [CI3](../01-cloud-infrastructure/03-control-planes-and-reconciliation.md) and [CI5](../01-cloud-infrastructure/05-scheduling-and-noisy-neighbors.md) carry the Kubernetes control and placement paths further.
 
 ## Separate decisions from the work they control
 
@@ -133,9 +121,9 @@ For pending workloads, inspect queue age, scheduling attempts, filter reasons, n
 
 After placement, compare requests with actual CPU time, working-set memory, device use, and pressure stall information. CPU pressure reports time runnable work could not execute; memory and I/O pressure report stalls caused by reclaim or storage. Correlate those signals with latency by workload and node. If one tenant causes stalls only within its shuffle shard or node set, adjust its request, concurrency, or isolation boundary before increasing the entire cluster.
 
-> **Controller diagnosis.** A high reconcile rate with no change in observed state usually means an action is failing, ownership is contested, or status does not record the progress needed to stop repeating it.
+> **Reconciliation evidence.** A high reconcile rate with no change in observed state usually means an action is failing, ownership is contested, or status does not record the progress needed to stop repeating it.
 
-## Running design checkpoint
+## Continuing worked case: worker placement and recovery capacity
 
 The notification capacity target from SD7 becomes desired state: 75 ready worker Pods at 100 successful dispatch starts per second, or 7,500 per second before provider throttling. Each Pod requests 1 CPU and 1 GiB. A controller observes arrival rate, oldest-event age, ready throughput, and retry rate; it changes desired replicas but does not choose nodes. The scheduler places each pending Pod from requests, node health, taints, and topology rules.
 

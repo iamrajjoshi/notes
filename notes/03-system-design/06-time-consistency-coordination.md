@@ -1,11 +1,9 @@
 ---
 title: Reason About Time, Consistency, and Coordination
-shortTitle: Consistency and coordination
 description: Specify what concurrent clients may observe, decide what happens during a partition, and use consensus, leases, fencing, outboxes, or sagas only where the invariant demands them.
-collection: system-design
 slug: time-consistency-coordination
 order: 6
-number: SD6
+identifier: SD6
 duration: 3 hours
 difficulty: Advanced
 tags:
@@ -21,15 +19,7 @@ tags:
 
 Consistency is a promise about allowed histories. Coordination removes some histories by making participants wait; decide which history would violate the business invariant before paying that latency and availability cost.
 
-## Questions this note answers
-
-- Read a concurrent operation history and state the observation the product forbids
-- Distinguish linearizability, serializability, causal consistency, and eventual convergence
-- Apply CAP only to behavior during a network partition
-- Explain leader terms, majority commit, leases, and fencing tokens
-- Choose the smallest conditional write, constraint, transaction, or consensus boundary that protects an invariant
-- Choose an outbox or saga when one business action crosses service boundaries
-- State an invariant before selecting a coordination mechanism
+For slower derivations, [DS2](../06-distributed-systems/02-time-causality-and-snapshots.md) covers causality, [DS5](../06-distributed-systems/05-consensus-and-replicated-state-machines.md) covers consensus and fencing, [DS7](../06-distributed-systems/07-replication-consistency-and-transactions.md) covers client-visible histories and distributed commit, and [DB4](../07-data-systems/04-transactions-concurrency-and-recovery.md) covers local transaction isolation.
 
 ## Read consistency as a rule for observable histories
 
@@ -147,7 +137,7 @@ For cross-service state, follow one business operation by its stable ID. Confirm
 
 > **Clock boundary.** Wall-clock timestamps help explain events, but authority should come from a term, epoch, version, or token whose ordering the system enforces.
 
-## Running design checkpoint
+## Continuing worked case: invariants and event publication
 
 Two invariants drive coordination. First, one tenant-scoped idempotency key produces one order result. Second, an accepted order or status transition and its notification intent either both commit or neither commits. The shard primary enforces both inside one PostgreSQL transaction: write the order and line items, record the operation result, increment the order version when needed, and insert an outbox row with a stable `event_id`. Because all four records share the shard and virtual bucket, this path does not need a distributed transaction.
 

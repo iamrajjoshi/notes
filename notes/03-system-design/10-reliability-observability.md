@@ -1,18 +1,17 @@
 ---
-title: Design Recovery and the Evidence to Operate It
-shortTitle: Reliability and observability
-description: Map failure domains, set RTO and RPO, test backups, budget tail latency, limit correlated failure, canary changes, and instrument the signals needed to explain user impact.
-collection: system-design
+title: Design regional ownership, recovery, and the evidence to operate it
+description: Map failure domains and regional data ownership, set RTO and RPO, test backups, budget tail latency, limit correlated failure, and instrument the evidence needed to operate the design.
 slug: reliability-observability
 order: 10
-number: SD10
-duration: 2.5 hours
+identifier: SD10
+duration: 4 hours
 difficulty: Advanced
 tags:
   - failure domains
   - RTO
   - RPO
   - tail latency
+  - cross-region
   - OpenTelemetry
   - canary
 ---
@@ -21,17 +20,7 @@ tags:
 
 Reliability comes from bounded failure and rehearsed recovery. Observability supplies the evidence: what users lost, which boundary saturated, how requests moved, and whether the attempted fix helped.
 
-## Questions this note answers
-
-- Distinguish reliability, availability, durability, fault, failure, and redundancy
-- Draw a failure-domain tree and find shared dependencies
-- Set RTO and RPO from business loss, then choose a tested recovery path
-- Calculate serial and redundant dependency availability while stating independence assumptions
-- Instrument logs, metrics, traces, and tail latency without unbounded label cardinality
-- Place continuous profiles beside logs, metrics, and traces without overstating their maturity
-- Define canary promotion and rollback using user-facing guardrails
-- Review a design for operation, security, reliability, performance, cost, and sustainability
-- Measure cost and resource or energy efficiency per useful product outcome
+[DS10](../06-distributed-systems/10-security-incidents-and-capstone.md) derives recovery and incident reasoning from failure cases, while [DB6](../07-data-systems/06-postgresql-replication-backups-and-schema-change.md) follows database positions, promotion, backup, and restore.
 
 ## Attach reliability words to a user promise
 
@@ -82,7 +71,164 @@ Failback is another migration, not “turn the primary back on.” Reconcile any
 
 Test the whole procedure under normal change controls. Record the detected failure, last durable position, fencing evidence, routing convergence, restored user success, missing or duplicate records, and failback. AWS reliability guidance likewise calls out spare quota for failover, multiple locations, data-plane recovery controls, and recurring disaster-recovery tests; the product design still has to turn those categories into an exact authority transition.
 
-## Multiply serial availability, question redundant independence
+The running design uses one active Region and one recovery Region. The next section pauses that case to study a different public design: Sentry separates global control state from customer data owned by a home Region. Treat it as a contrast in ownership and cross-Region communication; the order-service case resumes at [Continuing worked case](#continuing-worked-case-regional-failover-and-operating-evidence).
+
+## Worked case: Sentry separates global control from regional data
+
+Sentry's public multi-region design solves a different problem from the active-passive order service above. Customer data needs a named storage region, while accounts, routing metadata, and some third-party integration state must work across organizations and regions. The result is a global control plane joined to isolated regional data planes, not one database replicated everywhere.
+
+The public documentation uses three execution modes:
+
+- The **Control Silo** owns globally shared data and services. The documented flows place users, organization-to-region mappings, shared integration credentials, compatibility routing, and some webhook ingress work here.
+- A **Region Silo** owns customer and event data for organizations assigned to that region. Region Silos are separate instances and do not communicate directly with one another.
+- **Monolith mode** permits both ownership domains within the same application or deployment mode for self-hosted use, local development, or tests. It is not a third data owner and does not imply that a deployment has only one operating-system process.
+
+One model or endpoint belongs to an ownership domain even when the monolith can call it locally. That rule matters because code tested only as a monolith can hide a cross-region network call, serialization boundary, or stale replica read.
+
+```mermaid
+flowchart LR
+  accTitle: Sentry global control and regional data ownership
+  accDescr: Clients can call a region directly or enter through the Control Silo. Control owns global mappings and shared credentials, calls each isolated Region Silo through typed RPC, and asynchronously sends replicated records and tombstones through outboxes.
+  Client["Client or integration"]
+  Control["Control Silo<br/>global data, mappings, shared credentials"]
+  RegionUS["US Region Silo<br/>US tenant data"]
+  RegionDE["DE Region Silo<br/>DE tenant data"]
+
+  Client -->|"legacy URL or global webhook"| Control
+  Client -->|"direct region URL"| RegionUS
+  Client -->|"direct region URL"| RegionDE
+  Control <-->|"typed synchronous RPC"| RegionUS
+  Control <-->|"typed synchronous RPC"| RegionDE
+  Control -.->|"outbox replication and tombstones"| RegionUS
+  Control -.->|"outbox replication and tombstones"| RegionDE
+```
+
+_The dashed arrows show one documented source direction for global records such as users. A region-owned source can replicate toward Control instead; this is not automatic bidirectional replication._
+
+### Put every record under one write authority
+
+The first design artifact is an ownership table:
+
+| Data or operation                                    | Authoritative location     | Non-owner access                                      |
+| ---------------------------------------------------- | -------------------------- | ----------------------------------------------------- |
+| User identity and explicitly global records          | Control Silo               | RPC or selected local replicas                        |
+| Organization-to-home-region mapping                  | Control Silo               | Used by routing resolvers                             |
+| Tenant operational and event state                   | Organization's Region Silo | RPC when Control needs a current read or mutation     |
+| Credentials for integrations using the Control proxy | Control Silo               | Region asks Control to perform the provider operation |
+| Replicated projection                                | Source model's owning silo | Local read only; changes arrive asynchronously        |
+
+Replicated models remain single-writer while their source model is owned elsewhere. The owner accepts changes and sends projections to interested silos; the destination copy remains read-only under that ownership assignment. Because there are no concurrent replica writers in this design, it does not need a record-level conflict resolver for normal replication. A future ownership transfer or regional failover would need a separate fencing, catch-up, and authority-transfer contract; the public replication page does not define one. The current design pays with replica lag and no guaranteed read-after-write at the non-owner.
+
+This makes replicated models appropriate for high-volume reads where cross-region RPC latency is too costly and stale data is acceptable. Organization-scoped projections often need only the organization's home region. User-scoped projections can be limited to regions where that user has memberships. Selecting destinations reduces copying and data exposure compared with broadcasting every global row everywhere.
+
+### Route compatibility traffic with a global directory
+
+Sentry had existing API traffic addressed to `sentry.io` before organizations lived in several regions. Its Control Silo API Gateway inspects an endpoint classified as region-owned, derives an organization region from request information, and synchronously proxies the request. Documented route hints include organization slug or ID, Sentry App identifiers, DSN host, and a static pin list for paths without a useful location key.
+
+The proxy response includes `X-Sentry-Proxy-Url`, which tells a client which region URL avoids the extra Control hop. This is proxying plus a direct-location hint, not merely a redirect. The documentation also warns that requests sent to the global `sentry.io` endpoint do not satisfy the stated data-residency path; clients needing that property must use the region domain directly.
+
+The general pattern needs four explicit contracts:
+
+1. Which request field selects the tenant or organization?
+2. Which strongly owned directory maps that identity to a home region?
+3. What happens when the mapping is absent, stale, or changes during a request?
+4. Can the client cache a direct endpoint, and how is that hint invalidated after a move?
+
+A global directory is now on the compatibility request path. Its availability, mapping correctness, and proxy latency must be measured separately from the destination region.
+
+### Keep one authority for shared mutable credentials
+
+One external integration can serve organizations in several regions, while a provider refresh token is shared mutable state. If each region copied and refreshed that token, two regions could race: both observe expiry, one rotates the token, and the other invalidates or overwrites the new value.
+
+Sentry keeps credential loading and refresh coordination in Control. A Region Silo sends the desired provider operation to Control; Control adds credentials, calls the provider, refreshes an expired token, persists the replacement, retries the provider request, and returns the result. The reusable rule is to send the operation to the writable secret authority rather than distribute writable copies of the secret.
+
+That decision makes Control and the provider synchronous dependencies for the operation. It also creates a narrow place to audit credential use and serialize refresh. Capacity planning must include requests from every region, provider latency, refresh storms, and the effect of a Control outage on integration delivery.
+
+### Choose RPC only when the owner must answer now
+
+Sentry uses cross-region Remote Procedure Calls when a read or mutation must run synchronously in the owning silo. Services bundle domain methods such as organizations, users, or integrations. A typed service interface has a local implementation and serializable request and response models; the organization example in the documentation uses a database-backed implementation. In monolith mode or the owning silo, the framework calls the local implementation; across silos, it serializes JSON and uses HTTP. Tests also cross a serialization path so local success does not hide an invalid wire type.
+
+A region-owned method needs a resolver that selects its destination. Documented resolvers route by organization slug, organization ID, explicit region name, or an argument containing an organization ID. Remote requests use an internal service-and-method endpoint and an HMAC signature made with a secret shared by Control and Region instances. The cited architecture page establishes request authenticity and integrity; it does not document transport encryption, replay prevention, or per-method authorization, so those remain separate review questions.
+
+RPC yields an answer from the current owner, but it does not make the caller's database and the owner's database one transaction. The call adds wide-area latency and availability coupling. A lost response from a mutating call is ambiguous: the owner may have committed before the caller timed out. The public architecture page does not promise exactly-once RPC, so an engineering review should require an idempotency key, conditional mutation, or reconciliation query for effects that cannot be repeated safely.
+
+Deployments across regions are not atomic, which turns internal RPC into a versioned distributed API. Sentry documents an expand-migrate-contract sequence:
+
+- Deploy a new method to every receiver before any caller uses it.
+- Add a parameter with a default, update callers, and only then make it required.
+- Remove callers before removing a method.
+- Rename by adding the new contract, migrating callers, and removing the old one later.
+
+An in-place rename can fail while old and new releases coexist even when every change is in one repository.
+
+### Replicate state through a transactional outbox
+
+For local reads that can be stale, the source model writes an outbox record in the same database transaction as the authoritative change. After commit, outbox processing sends a serialized projection to an idempotent handler in each interested destination. The source and outbox either commit together or neither does; delivery after commit remains asynchronous and retryable.
+
+This is at-least-once processing, not exactly-once execution. A destination handler may receive the same source version again after a timeout or worker failure. It must compare source identity and version or otherwise make replacement idempotent. Lag has no automatic business meaning: the product must state how stale a local replica may be and whether a path falls back to RPC, returns stale data explicitly, or fails when that bound is exceeded.
+
+Outbox ordering is scoped rather than global. Sentry's outboxes use a shard scope and shard identifier; a Control outbox also names a destination region so each destination can make progress independently. Processing can coalesce several projection messages and use the newest source state, which fits state replacement but can lose meaningful intermediate deltas. An operation that requires every transition needs a non-coalescing identity and pays the resulting throughput cost.
+
+The Sentry outbox documentation describes indefinite retry and no dead-letter queue. One poison message can therefore halt its ordered shard until code or data is repaired. This is intentionally different from the webhook mailbox's bounded discard policy. Alert on oldest age per shard, retain the failed payload and source identity for repair, and make replay safe before an incident.
+
+Backfills use the same machinery by generating outbox work for existing source records in batches. Sentry versions those backfills so a later replica-schema change can replay the population again. This avoids a separate bulk-copy path with different serialization and ownership rules, but backfill traffic must be rate-limited against live replication and poison-message recovery.
+
+### Use tombstones when a database foreign key cannot cross regions
+
+A PostgreSQL foreign key cannot cascade from a Control database into isolated Region databases. Sentry's `HybridCloudForeignKey` moves `CASCADE` or `SET NULL` behavior into application-level eventual reconciliation.
+
+The documented user-deletion path is:
+
+```text
+Control transaction: delete user + save outbox
+  -> deliver deletion message to a Region Silo
+  -> persist a tombstone for the removed user
+  -> reconcile every regional relation that referenced the user
+```
+
+A tombstone records that an object once existed and is now absent. Sentry includes a monotonic ID, table name, and object identifier. Each relationship keeps a watermark containing its last fully processed record and a transaction identifier. Reconciliation processes one relation in batches, applies its `CASCADE` or `SET NULL` action, and advances that relation's watermark independently.
+
+The watermark is needed because eventual delivery permits a late row to reference a user after the first deletion pass. The system must revisit the relation until its processed position has passed the relevant work. During convergence, a dangling reference can exist by design. APIs must decide whether to hide it, tolerate a null projection, or fetch the authority; the cross-database mechanism cannot provide an atomic foreign-key guarantee.
+
+### Store external webhooks before forwarding them
+
+Some third-party providers can call only one legacy webhook URL and expect a quick response. Sentry's Control Silo stores those payloads in PostgreSQL and later delivers them to the relevant Region Silos. The docs give three reasons not to hold the provider request open: short provider timeouts, integrations shared across regions, and the risk of exhausting synchronous RPC workers.
+
+Payloads are assigned to ordered **mailboxes**. A mailbox usually maps to one integration. For high-volume providers, Sentry uses a finer remote-resource key, such as a GitLab project or Jira issue, so operations for one resource remain ordered while unrelated resources drain concurrently. This is a deliberate ordering boundary: coarser mailboxes preserve more order and suffer more head-of-line blocking; finer mailboxes gain throughput and preserve only per-key order.
+
+The documented scheduler polls for the first due message in each mailbox, moves a selected block's next schedule forward to reserve it, and starts mailbox-draining tasks. Successful responses and most client errors delete the record. Network and server failures increment attempts and reschedule the head item; after ten attempts, the payload is logged and discarded. That is a bounded-delivery policy, unlike an indefinitely retried transactional replication outbox.
+
+The described delete-after-forward protocol has an ambiguous failure window: a Region can accept a webhook and the Control worker can lose the reply before deleting the row. Duplicate delivery is therefore a design inference unless the receiver supplies deduplication; the public page does not claim exactly-once behavior. A stable provider delivery ID or payload digest should be carried through the mailbox and checked at the destination when duplicate side effects matter.
+
+### Select the cross-region mechanism from the required answer
+
+| Requirement                                                              | Mechanism                             | Cost accepted                                                               |
+| ------------------------------------------------------------------------ | ------------------------------------- | --------------------------------------------------------------------------- |
+| Current authoritative read or mutation must finish now                   | Owner-routed RPC                      | Wide-area latency, synchronous failure coupling, ambiguous mutation timeout |
+| High-rate local reads may be stale                                       | Replicated model via outbox           | Replica lag, no read-after-write at the copy, schema and backfill work      |
+| A source mutation must eventually cause durable remote work              | Transactional outbox                  | At-least-once idempotency, backlog and poison-message operation             |
+| Cross-database deletion must converge                                    | Tombstone plus per-relation watermark | Temporary dangling references and batched cleanup                           |
+| External sender needs a quick acknowledgement and later ordered delivery | Durable webhook mailbox               | Per-key head-of-line blocking and a bounded discard policy                  |
+
+Do not replace this table with “use events for scale.” The choice turns on authority, freshness, transaction boundary, retry duration, ordering scope, and what the caller may observe during a partition.
+
+### Analyze failures without inventing guarantees
+
+The public pages document mechanisms, not a complete availability or disaster-recovery contract. They do not establish Control Silo failover topology, a numeric replication-lag SLO, cross-silo ACID transactions, exactly-once RPC or delivery, automatic writable-replica promotion, or a global ordering across outbox shards. Keep those as open requirements.
+
+The architecture still supports concrete failure analysis:
+
+- If Control is unavailable, compatibility routing, global metadata access, and shared credential operations can fail. A direct region-local operation may have fewer synchronous dependencies, but the public pages do not promise that all such operations continue.
+- If one Region is unavailable, gateway and RPC calls to it fail on the synchronous path. Other Region Silos have no direct dependency on it. Control can durably accept some webhooks, while delivery to the failed region retries under the mailbox's bounded policy.
+- If outbox processing lags, the authoritative source remains the owner while local projections and deletion cascades become stale. Oldest-outbox age expresses this failure better than queue count alone.
+- If one ordered outbox shard or mailbox contains a poison message, later work behind that ordering key stalls. Repair, discard authority, and replay need named owners.
+- If an organization mapping is wrong, the gateway can route to the wrong region even though both regions are healthy. Mapping correctness and change history are reliability data.
+
+An operations view should include gateway routing failures and extra-hop latency, RPC latency and errors by service and source/destination, outbox backlog and oldest age by shard, replica source version, tombstone watermark lag and remaining references, webhook oldest age and head retries by mailbox, discard count, and idempotency conflicts. Those signals reveal whether the failed boundary is routing, synchronous owner access, eventual propagation, deletion convergence, or external delivery.
+
+This case follows the Control Silo and Region Silo terminology in Sentry's public architecture pages. Current source may use newer “Cell” names in some internal paths; check the deployed version before mapping a class or metric name to this conceptual model.
+
+## Serial dependencies multiply; redundant paths need independence
 
 If every request requires auth and data services, their availabilities multiply. Redundant replicas improve the number only when failures are independent; shared power, credentials, deploy tooling, quotas, or code can erase that assumption.
 
@@ -126,7 +272,7 @@ Averages hide a small slow population that dominates a fan-out request. Histogra
 
 OpenTelemetry also defines a profiling signal, currently alpha. A profile samples stack traces and resource use so an operator can connect CPU or allocation pressure to code paths; it complements rather than replaces request traces and host metrics. Treat its status as version-sensitive, and do not promise that every language, collector, or backend implements the same profile path. For a portable baseline, keep logs, metrics, and traces working independently, then add continuous profiles where the runtime and collector support them.
 
-## Review the whole workload, not only its uptime
+## Reliability covers the whole workload, not only uptime
 
 One useful review lens comes from the AWS Well-Architected Framework, which currently names six pillars. It is not an interview scoring standard, and another cloud can use the same questions without AWS products.
 
@@ -185,7 +331,7 @@ Compare the canary with a simultaneous control because traffic mix and dependenc
 
 > **Evidence order.** Measure user impact first, find the boundary where behavior diverges, then inspect resource and code detail. Starting from a random error log can waste the incident window.
 
-## Running design checkpoint
+## Continuing worked case: regional failover and operating evidence
 
 The service runs active-passive across two regions. Within the active region, each shard waits for its synchronous standby in another zone. A separate asynchronous regional copy may trail by at most the declared 30-second RPO. The passive region keeps database replicas, routing controls, API capacity, queue access, credentials, and the six-node notification pool ready; the cost buys a credible 15-minute RTO rather than hoping machines and quotas appear during an outage.
 
@@ -201,6 +347,7 @@ Reliability claims are useful only when they name the user operation, failure cl
 - **Draw shared failure domains and test recovery.** Processes, nodes, zones, Regions, accounts, identity systems, quotas, deploy pipelines, and versions can invalidate an independence assumption. Measure detection through controlled traffic admission, and prove the RPO against known business records after restore.
 - **Calculate dependency effects.** Independent mandatory services at 99.95% and 99.9% yield 99.85005%, or about 64.8 unavailable minutes in a 43,200-minute month. Redundancy improves that figure only for causes the copies do not share.
 - **Make regional authority explicit.** Active-passive, home-region writes, and multi-writer systems pay different consistency and recovery costs. Fence the old writer, measure the actual recovery position, provide failed-over capacity and dependencies, test routing convergence, and treat failback as another migration.
+- **Choose a cross-region mechanism from ownership and freshness.** Sentry's public design keeps global state in a Control Silo and tenant data in a home Region Silo. It uses owner-routed RPC for synchronous work, single-writer replicas and transactional outboxes for stale local reads, tombstones and watermarks for eventual deletion, and ordered mailboxes for external webhooks.
 - **Alert on budget consumption.** A 99.9% SLO allows a 0.1% bad-event fraction. Burn rate divides observed bad fraction by that allowance; combine short and long windows so a fast sustained burn pages while a slow burn creates a lower-urgency response.
 - **Preserve distributions and causal links.** Histograms expose tails, metrics show rates and resource state, traces connect cross-process work, structured logs explain decisions, and profiles attribute CPU or allocation work to code. Keep unbounded IDs out of metric labels.
 - **Operate change and incidents at the user boundary.** Canary against a simultaneous control with rollback authority and SLO guardrails. During failure, quantify impact, stop the spread, restore service, preserve evidence, and turn repeated manual work into tested automation.
@@ -223,3 +370,8 @@ Reliability claims are useful only when they name the user operation, failure cl
 - [AWS Well-Architected Framework: The Six Pillars](https://docs.aws.amazon.com/wellarchitected/latest/framework/the-pillars-of-the-framework.html): Defines operational excellence, security, reliability, performance efficiency, cost optimization, and sustainability as separate review areas.
 - [AWS Well-Architected: Sustainability Pillar](https://docs.aws.amazon.com/wellarchitected/latest/sustainability-pillar/sustainability-pillar.html): Provides current guidance for measuring workload resource use, reducing waste, and recording trade-offs against sustainability targets.
 - [Google SRE: Introduction](https://sre.google/sre-book/introduction/): Describes service ownership across availability, latency, performance, efficiency, change management, monitoring, emergency response, and capacity planning.
+- [Sentry application architecture and silo modes](https://develop.sentry.dev/application-architecture/overview/): Defines Control, Region, and Monolith modes and the ownership split between global and tenant data.
+- [Sentry Control Silo](https://develop.sentry.dev/application-architecture/multi-region-deployment/control-silo/): Documents compatibility routing, shared integration credential proxying, and durable webhook mailboxes.
+- [Sentry cross-region replication](https://develop.sentry.dev/application-architecture/multi-region-deployment/cross-region-replication/): Documents replicated models, single-writer ownership, outbox delivery, cross-silo tombstones, and relationship watermarks.
+- [Sentry cross-region RPC](https://develop.sentry.dev/application-architecture/multi-region-deployment/cross-region-rpc/): Documents typed services, destination resolvers, HMAC authentication, local and remote transports, and rolling protocol changes.
+- [Sentry transactional outboxes](https://develop.sentry.dev/backend/application-domains/outboxes/): Documents source-transaction coupling, delivery, ordering shards, coalescing, retries, and cross-silo failure behavior.

@@ -1,11 +1,9 @@
 ---
 title: The kernel boundary
-shortTitle: Kernel boundary
 description: Build a usable map of user space, syscalls, processes, file descriptors, and the privilege checks that sit beneath every service.
-collection: low-level-infrastructure
 slug: kernel-boundary
 order: 1
-number: LL1
+identifier: LL1
 duration: 125 min
 difficulty: Foundation
 tags:
@@ -18,15 +16,6 @@ tags:
 ## Working model
 
 Treat the kernel as a shared switchboard with guarded entry points. A process asks through a syscall; the kernel checks identity and policy, finds an object such as a file or socket, then performs work on the process's behalf.
-
-## Questions this note answers
-
-- Trace a file or socket operation across the user-kernel boundary
-- Distinguish a process, a thread, a thread group, and an open file description
-- Trace boot from the kernel's first user-space process into a supervised service
-- Explain fork, exec, exit, wait, signals, and pidfds as one process lifecycle
-- Explain why PID 1 and signal handling matter inside a container
-- Place capabilities, seccomp, and Linux security modules at the correct enforcement point
 
 ## Name the layers before tracing them
 
@@ -57,6 +46,8 @@ A syscall can return immediately, fail with an error, or block the calling threa
 On a successful `open`, `socket`, or similar call, the kernel returns a file descriptor: a small nonnegative integer in that process. Descriptors 0, 1, and 2 conventionally begin as standard input, standard output, and standard error. The integer is meaningful only through that process's descriptor table.
 
 Suppose a server calls `recv` on descriptor 7. The runtime enters the kernel, the kernel resolves 7 to an open socket description, checks the socket state, and either copies available bytes or sleeps the thread. A readiness API such as `epoll` can let one thread wait for many descriptors instead of assigning a blocked thread to each connection. Later notes follow the scheduler and network queues below this boundary.
+
+A pathname and an open descriptor have different lifetimes. `unlink` removes one directory entry for a file; an already-open descriptor still refers to the open file description and underlying object until the final reference closes. This is why a process can keep reading a file whose old pathname no longer resolves.
 
 > **Keep the boundaries straight.** A function call stays within one address space. A syscall crosses into the host kernel. A hypercall, covered later, comes from a guest kernel to a hypervisor interface.
 

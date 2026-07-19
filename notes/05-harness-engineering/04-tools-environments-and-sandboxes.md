@@ -1,11 +1,9 @@
 ---
 title: Tools, MCP, environments, and sandboxes
-shortTitle: Tools, MCP, sandboxes
 description: Treat every tool and MCP server as a capability boundary, then make schema, transport, retry, permission, and isolation semantics explicit.
-collection: harness-engineering
 slug: tools-environments-and-sandboxes
 order: 4
-number: HE4
+identifier: HE4
 duration: 155 min
 difficulty: Core
 tags:
@@ -21,21 +19,13 @@ tags:
 
 A tool is a narrow capability lent to a run. Its schema describes the request; its executor controls identity, isolation, time, network, side effects, and the evidence returned.
 
-## Questions this note answers
-
-- Classify tools by read, write, external effect, and privilege
-- Explain MCP lifecycle, capabilities, server features, schemas, and transports
-- Design retry-safe calls with idempotency keys and reconciled outcomes
-- Keep prompt injection inside untrusted content from changing authority
-- Choose sandbox, filesystem, network, secret, and approval boundaries for a task
-
 ## Expose the smallest action the task needs
 
 A shell tool can express almost any host action, which also makes its policy difficult to inspect. Prefer task-shaped tools with typed arguments, bounded output, known identity, deadlines, and structured errors. Separate reads from writes so ordinary diagnosis does not carry mutation authority.
 
 Validate arguments again in the executor; model-generated JSON is still untrusted input. Normalize paths, resolve the final target, constrain resource identifiers, cap output, and return a receipt that can be checked independently. A friendly tool description guides selection but is not an authorization control.
 
-> **Tool review.** Ask what the call can reach if every argument is adversarial. The answer should be narrower than the executor's host identity.
+> **Effective reach.** Ask what the call can reach if every argument is adversarial. The answer should be narrower than the executor's host identity.
 
 ## Separate selection, authorization, execution, and receipt
 
@@ -84,7 +74,7 @@ With `stdio`, the client launches the server as a child process and exchanges ne
 
 Streamable HTTP runs the server independently behind one endpoint that accepts POST and GET. It may use Server-Sent Events for multiple server messages, notifications, and resumable streams. A server can serve many clients, so it needs normal service controls: TLS, authentication when protected, request limits, tenant isolation, and per-request authorization. It must validate `Origin` when present and reject an invalid value with HTTP 403; a local server should bind to loopback rather than every interface. Streamable HTTP replaced the older HTTP+SSE transport from the 2024-11-05 protocol version.
 
-> **Transport test.** A local child process and a remote multi-tenant service can expose the same tool list while requiring completely different identity, isolation, lifecycle, and incident controls.
+> **Transport boundary.** A local child process and a remote multi-tenant service can expose the same tool list while requiring completely different identity, isolation, lifecycle, and incident controls.
 
 ## Treat MCP tasks as an experimental handle, not a workflow guarantee
 
@@ -100,11 +90,11 @@ Same input does not always mean same operation. A deliberate second notification
 
 > **Toy comparison.** A host may cache repeated `read_service` calls for one turn, but a write needs a caller-chosen operation ID and a receipt from the system that owns the change. Reusing read output and proving a write committed solve different problems.
 
-### Code walk: distinguish result caching from effect idempotency
+### Worked trace: distinguish result caching from effect idempotency
 
-Open [minimal-harness.mjs](examples/minimal-harness.mjs) at `setMaintenance`. The operation map stores the input digest and result under `operationId`; a repeated ID with changed arguments fails, while a repeated ID with the same arguments returns the recorded result. Follow the uncertain-response branch into `reconcileWrite` and note that it reads committed state before the run continues.
+In [minimal-harness.mjs](examples/minimal-harness.mjs), `setMaintenance` stores the input digest and result under `operationId`. A repeated ID with changed arguments fails, while a repeated ID with the same arguments returns the recorded result. The uncertain-response branch reaches `reconcileWrite`, which reads committed state before the run continues.
 
-Now add a temporary cache around `readService` in a scratch copy. Index it by the current turn, tool name, and normalized arguments; clear it before the next model call. The cache may avoid a repeated read, but deleting it must not change write safety. Write one test for a repeated read and another for a lost write response. If both tests depend on the same cache entry, the design has mixed two contracts.
+A turn-local cache around `readService` would use the current turn, tool name, and normalized arguments as its key, then clear before the next model call. Such a cache may avoid a repeated read, but deleting it must not change write safety. The repeated-read test should depend on the cache; the lost-write-response test should depend on the operation record and reconciliation. If both depend on the same cache entry, the design has mixed two contracts.
 
 ## Recover a timed-out pull-request draft safely
 
@@ -135,9 +125,9 @@ Choose the execution boundary from the workload and threat model. A user-space k
 
 > **Toy sandbox.** Give a parser-repair run one disposable workspace, read access to the checkout, write access only to `packages/parser`, no outbound network, and a 15-minute deadline. The sandbox limits damage; the host still validates each proposed tool call and checks the resulting diff.
 
-### Code walk: follow a launcher grant into the runner
+### Worked grant: follow launcher policy into the runner
 
-Define the toy run as data owned by the launcher:
+The launcher owns this toy run grant:
 
 ```yaml
 tools: [read_file, apply_patch, run_test]
@@ -148,7 +138,7 @@ deadline_seconds: 900
 workspace: disposable
 ```
 
-Have the runner reject an undeclared tool, a write under `tests/parser`, a network request, and a call after the deadline. Then place a conflicting policy file inside the toy checkout and show that it can't widen the launcher's grant. MCP discovery may add descriptions and schemas to the model's context, but the resulting calls still pass through the same grant.
+Under this grant, the runner rejects an undeclared tool, a write under `tests/parser`, a network request, and a call after the deadline. A conflicting policy file inside the checkout cannot widen the launcher's grant. MCP discovery may add descriptions and schemas to the model's context, but the resulting calls still pass through the same host-owned policy.
 
 ## Diagnose a blocked call from policy toward the host
 

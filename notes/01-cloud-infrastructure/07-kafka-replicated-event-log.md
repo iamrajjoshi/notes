@@ -1,11 +1,9 @@
 ---
 title: Kafka as a replicated event log
-shortTitle: Kafka
 description: Start with Kafka vocabulary, then follow one record through partitioning, replication, consumption, replay, and failure.
-collection: cloud-infrastructure
 slug: kafka-replicated-event-log
 order: 7
-number: CI7
+identifier: CI7
 duration: 145 min
 difficulty: Core
 tags:
@@ -21,14 +19,22 @@ tags:
 
 Kafka is a distributed, retained log. Producers append records, brokers store partition replicas, and consumer groups independently track how far they have read. Kafka does not run the consumer's business code, delete a record when one consumer finishes, or replace the database that owns current application state.
 
-## Questions this note answers
+## Choose the asynchronous contract before Kafka
 
-- Define cluster, broker, topic, partition, record, key, offset, producer, consumer, consumer group, leader, follower, and in-sync replica
-- Trace one record from a producer through partition selection, replication, acknowledgement, consumption, and offset commit
-- Explain per-partition ordering, retention, replay, hot partitions, rebalancing, and lag
-- Compare at-most-once, at-least-once, idempotent production, and Kafka transactions without claiming universal exactly-once behavior
-- Plan a schema change and choose the topic, partition, durability, retention, security, and monitoring contract
-- Recognize when a task queue, request call, database, or object store is a better fit
+An HTTP request keeps the caller waiting for one response. Asynchronous work breaks that timing dependency, but the replacement contract must say whether one worker or many subscribers need each item, how long the system retains it, who acknowledges progress, and whether old work can be replayed.
+
+| Needed shape                                                                                      | Mechanism                                                                                       | Concrete examples                                                                                                                     |
+| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| One job should be claimed by one worker and redelivered after an incomplete attempt               | Competing-consumer queue with a lease or visibility timeout and explicit acknowledgement        | [Amazon SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html); RabbitMQ queues |
+| One publication should be pushed independently to several subscribers                             | Publish/subscribe topic; put a durable queue behind each subscriber that needs isolated retries | [Amazon SNS](https://docs.aws.amazon.com/sns/latest/dg/welcome.html), often fan-out to SQS                                            |
+| Events should be matched by content and routed to service targets                                 | Event bus plus rules, target permissions, retries, and a dead-letter owner                      | [Amazon EventBridge](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-rules.html)                                          |
+| Consumers need a retained ordered history that they can reread at their own positions             | Partitioned event log                                                                           | Kafka                                                                                                                                 |
+| Application code needs task declaration, worker pools, retries, and result handling over a broker | Task framework                                                                                  | Celery; CI8 separates the framework from Redis, RabbitMQ, SQS, or another broker                                                      |
+| A multi-step operation must resume from persisted boundaries after a process restart              | Durable workflow                                                                                | CI11 separates workflow history from worker lifetime, external-effect idempotency, stuck-work repair, and retention                   |
+
+Amazon Simple Queue Service (SQS) supplies managed work queues. Amazon Simple Notification Service (SNS) publishes to independent subscriptions. Amazon EventBridge matches events to targets through rules. These services can be composed: an SNS topic can fan out to several SQS queues, a task framework can consume a queue, and a database outbox can feed a retained log.
+
+No mechanism removes duplicate-delivery or ambiguous-outcome handling. The owner still needs a stable operation ID, an idempotent effect or reconciliation path, bounded retries, dead-letter policy, and queue-age alarms. Kafka is the retained-log choice in the table; the rest of this note derives what that choice means.
 
 ## Kafka keeps an event available to more than one reader
 

@@ -1,11 +1,9 @@
 ---
 title: Partitioning, DHTs, and Key-Value Stores
-shortTitle: Partitioning and key-value stores
 description: Move from centralized lookup to consistent hashing, then trace current Cassandra placement, writes, reads, repair, and tunable response thresholds without confusing them with linearizability.
-collection: distributed-systems
 slug: partitioning-dhts-and-key-value-stores
 order: 6
-number: DS6
+identifier: DS6
 duration: 3.5 hours
 difficulty: Core
 tags:
@@ -22,18 +20,7 @@ tags:
 
 Partitioning decides which replicas own a key; routing finds those replicas; the storage engine preserves each replica's state; and a consistency level decides which responses an operation waits for. None of those choices alone supplies a global transaction order.
 
-## Questions this note answers
-
-- Explain why centralized indexes, flooding, supernodes, and structured overlays make different scaling trades
-- Map a key onto a consistent-hash ring and route a Chord lookup with successor and finger entries
-- Separate a logical partition, token range, replica, node, coordinator, and virtual node
-- Choose hash or range partitioning from point-query and ordered-scan requirements
-- Distinguish Cassandra's wide-column model from an analytical columnar store such as ClickHouse
-- Trace a current Cassandra write through its coordinator, natural replicas, commit logs, memtables, and acknowledgements
-- Trace a read through replica selection, reconciliation, SSTables, Bloom filters, and read repair
-- Explain hinted handoff, anti-entropy repair, tombstones, and why hints alone do not ensure convergence
-- Apply the DS5 client-history test to Cassandra acknowledgements and a network partition
-- State which extra protocols are needed before claiming linearizability or serializability
+[DS5](./05-consensus-and-replicated-state-machines.md) supplied the client-history test and the consensus authority behind a linearizable operation. This note first derives placement and routing, then uses Cassandra as a concrete case in which response thresholds do not prove a stronger history. [DS7](./07-replication-consistency-and-transactions.md) returns to the general replication, consistency, and distributed-transaction model.
 
 ## Begin with the lookup problem
 
@@ -89,7 +76,7 @@ Apache Cassandra is a **wide-column** database with a typed Cassandra Query Lang
 
 Wide-column is not the same as analytical columnar storage. Cassandra's current storage engine writes partitions and rows into immutable sorted-string tables (SSTables) ordered by token and clustering keys. It does not store one entire analytical column as a separate compressed stream so a scan can read only `revenue` across billions of unrelated rows. ClickHouse is an analytical columnar database: its storage layout reads selected columns and uses compression and vectorized execution for large aggregations. The names share the word "column" but describe different decisions.
 
-MongoDB supplies a document model with leader-based replica sets and flexible nested documents. HBase is another wide-column system, normally with one active primary region unless region replication is configured, and uses HDFS beneath its region servers. Treating all three as interchangeable "NoSQL" hides their authority, query, and failure contracts. Historical benchmark ratios from one dataset and one durability setting do not select a database.
+MongoDB supplies a document model with leader-based replica sets and flexible nested documents. HBase is another wide-column system, normally with one active primary region unless region replication is configured, and uses the Hadoop Distributed File System (HDFS) beneath its region servers. Treating all three as interchangeable "NoSQL" hides their authority, query, and failure contracts. Historical benchmark ratios from one dataset and one durability setting do not select a database.
 
 ## Model Cassandra around a bounded query
 
@@ -185,7 +172,7 @@ Availability outside a partition, latency, durability, isolation, and eventual r
 
 ## Work one placement, write, and repair case
 
-Start with the Chord ring from earlier. Key token 42 maps to member 45. When member 40 joins, token 42 stays at 45 because it lies above 40; keys 34 and 38 move to 40. That exercise establishes primary placement only.
+Start with the Chord ring from earlier. Key token 42 maps to member 45. When member 40 joins, token 42 stays at 45 because it lies above 40; keys 34 and 38 move to 40. This placement example establishes primary placement only.
 
 Now translate the idea to a Cassandra keyspace with RF 3. Cassandra hashes partition key `order-817` to a token and cluster metadata selects replicas A, B, and C on separate racks. Client X sends `status = paid` at `QUORUM` to coordinator D.
 

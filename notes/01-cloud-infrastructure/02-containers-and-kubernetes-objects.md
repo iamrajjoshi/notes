@@ -1,11 +1,9 @@
 ---
 title: Containers and the Kubernetes object model
-shortTitle: Objects and Pods
 description: Connect OCI images and Linux processes to Pods, controllers, configuration, and disposable workload instances.
-collection: cloud-infrastructure
 slug: containers-and-kubernetes-objects
 order: 2
-number: CI2
+identifier: CI2
 duration: 105 min
 difficulty: Foundation
 tags:
@@ -20,20 +18,11 @@ tags:
 
 An image is a packaged filesystem and launch contract. A container is a running process under isolation controls. A Pod is Kubernetes' smallest scheduling envelope.
 
-## Questions this note answers
-
-- Distinguish an image, container, Pod, node, and cluster
-- Read `apiVersion`, `kind`, `metadata`, `spec`, and `status` in a Kubernetes object
-- Explain registries, tags, digests, init containers, and restartable sidecars
-- Explain what containers in one Pod share and what they don't
-- Select a Deployment, StatefulSet, DaemonSet, Job, or CronJob by lifecycle
-- Separate deployable configuration from credentials and image content
-
 ## Kubernetes coordinates processes across machines
 
 One machine can run a container directly. The harder production problem is keeping several copies alive across many machines, replacing failures, rolling out a new image, giving changing copies a stable network name, and attaching configuration or storage. Kubernetes addresses that problem through an API and controllers.
 
-A **cluster** is one Kubernetes control plane plus its worker **nodes**. A node is a machine, physical or virtual, that runs workload processes. The control plane stores desired objects and makes cluster-wide decisions. A node agent called the kubelet receives assigned Pods and asks a container runtime to start them. Chapter 3 follows that full path.
+A **cluster** is one Kubernetes control plane plus its worker **nodes**. A node is a machine, physical or virtual, that runs workload processes. The control plane stores desired objects and makes cluster-wide decisions. A node agent called the kubelet receives assigned Pods and asks a container runtime to start them. [CI3: Control planes, etcd, and reconciliation](03-control-planes-and-reconciliation.md) follows that full path.
 
 Kubernetes objects use a common shape:
 
@@ -71,7 +60,7 @@ This declaration asks for three Pods. It does not say which nodes will run them,
 
 An Open Container Initiative (OCI) image contains ordered filesystem layers plus metadata such as the entrypoint, arguments, environment defaults, and platform. A runtime unpacks that image and starts a host-kernel process with namespaces, cgroups, capabilities, mounts, and a restricted root filesystem around it.
 
-Those Linux terms describe separate controls. A namespace changes what the process can see, such as process IDs, mounts, or network devices. A cgroup accounts for processes and can apply CPU or memory policy. Capabilities split privileged kernel operations into narrower checks. None creates a separate kernel; Chapter LL6 assembles the complete host-side path.
+Those Linux terms describe separate controls. A namespace changes what the process can see, such as process IDs, mounts, or network devices. A cgroup accounts for processes and can apply CPU or memory policy. Capabilities split privileged kernel operations into narrower checks. None creates a separate kernel; [LL6: Containers and cgroups](../02-low-level-infrastructure/06-containers-and-cgroups.md) assembles the complete host-side path.
 
 The process still makes system calls into the node's kernel. That shared kernel is why a container starts quickly and why its security boundary differs from a hardware virtual machine. Immutability applies to the image artifact; a running container can still write to its writable layer or mounted volumes.
 
@@ -113,7 +102,7 @@ deploy/storefront/overlays/prod/kustomization.yaml → four replicas and a prod 
 
 The base includes a Deployment and Service. Both use the label `app: storefront-api`; the Service exposes port `80` and forwards it to the named container port `http` on port `8080`. The Pod template declares readiness at `/ready`, requests CPU and memory, and gives the process time to drain on termination. An overlay supplies a replica count and immutable image digest.
 
-Render each overlay with `kubectl kustomize` and inspect the result before applying it. A changed image digest alters the Pod template and starts a rollout. A changed Service selector alters traffic membership without replacing Pods. A selector typo can therefore produce healthy Pods and an empty EndpointSlice at the same time.
+Render each overlay with `kubectl kustomize` and inspect the result before applying it. A changed image digest alters the Pod template and starts a rollout. A changed Service selector alters traffic membership without replacing Pods. A selector typo can therefore produce healthy Pods and an empty EndpointSlice—the Kubernetes object that lists a Service's current network backends—at the same time. CI4 follows that traffic path in full.
 
 _The example is self-contained; build the field relationships rather than copying a deployment from another service._
 
@@ -136,7 +125,7 @@ Pod-template change → new ReplicaSet → ready new Pods → old scale-down
 
 Start with `kubectl get deployment,replicaset,pod` in the intended namespace and compare desired, current, updated, available, and ready counts. `kubectl rollout status deployment/<name>` reports rollout progress, while `kubectl describe` shows conditions and recent events. Match the Pod template labels to the Service selector before assuming traffic reaches the new Pods. Sort namespace events by time when a scheduling or image problem is suspected.
 
-A Pending Pod points first to scheduling events, claims, quotas, or image credentials. `ImagePullBackOff` points to image reference, registry reachability, or authentication. A Running but unready Pod points to the readiness path, listener, configuration, or dependency. `CrashLoopBackOff` calls for current and previous container logs, exit reason, and restart count. An OOM-killed process calls for memory limit and working-set evidence. Use `kubectl debug` or an ephemeral container only when the image lacks tools and policy allows it; record any change made during diagnosis.
+A Pending Pod points first to scheduling events, storage claims, namespace quotas, or image credentials; CI4 covers claims and CI5 covers quotas and placement. `ImagePullBackOff` points to image reference, registry reachability, or authentication. A Running but unready Pod points to the readiness path, listener, configuration, or dependency. `CrashLoopBackOff` calls for current and previous container logs, exit reason, and restart count. An OOM-killed process calls for memory limit and working-set evidence. Use `kubectl debug` or an ephemeral container—a temporary diagnostic container added to an existing Pod—only when the image lacks tools and policy allows it; record any change made during diagnosis.
 
 - Controller evidence: Deployment conditions and ReplicaSet counts.
 - Node evidence: scheduling event, assigned node, image pull, and mount status.

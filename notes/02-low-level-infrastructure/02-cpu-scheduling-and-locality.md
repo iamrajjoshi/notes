@@ -1,11 +1,9 @@
 ---
 title: CPU scheduling, caches, and lock-free code
-shortTitle: CPU and locality
 description: Connect CPU topology, run queues, power states, caches, NUMA, and memory ordering to the progress of runnable code.
-collection: low-level-infrastructure
 slug: cpu-scheduling-and-locality
 order: 2
-number: LL2
+identifier: LL2
 duration: 150 min
 difficulty: Core
 tags:
@@ -18,14 +16,6 @@ tags:
 ## Working model
 
 A runnable thread competes twice: first for CPU time, then for nearby data. Scheduling decides when and where it runs; cache coherence and NUMA placement decide how expensive its memory accesses become.
-
-## Questions this note answers
-
-- Explain the job of Linux's fair scheduler without treating CFS documentation as the complete current implementation
-- Trace a load through address translation, the cache hierarchy, and local or remote memory; recognize false sharing
-- Explain why utilization, frequency, power, energy, and completed work are different measurements
-- Distinguish lock-free, wait-free, and obstruction-free progress claims
-- Identify why atomics still need memory ordering and safe reclamation
 
 ## Begin with CPU topology and task states
 
@@ -65,21 +55,16 @@ Caches hold copies of memory in fixed-size **cache lines**. Current x86 processo
 
 A **working set** is the code and data actively used during an interval, not the process's total allocation. Reuse tends to hit when that set fits in the available cache. If it exceeds the cache, or other cores compete for a shared LLC, useful lines may be evicted before reuse.
 
-### Trace one load from a virtual address to memory
+### Preview the memory translation taught in LL3
 
-Suppose a thread loads `x` through a virtual address and the corresponding data is not already cached. A useful conceptual path is:
+[LL3: Virtual memory and page faults](03-virtual-memory.md) derives page tables, Translation Lookaside Buffer (TLB) entries, and faults. For this note, the needed dependency is shorter: translation supplies a physical location, then a load checks the cache hierarchy and eventually local or remote memory.
 
 ```text
-virtual address
-  -> data TLB (page-table walk on a miss)
-  -> L1D -> L2 -> LLC
-  -> local DRAM
-     or socket interconnect -> remote DRAM
+virtual address -> TLB or page-table walk -> physical location
+  -> L1D -> L2 -> LLC -> local DRAM or remote NUMA memory
 ```
 
-The data Translation Lookaside Buffer (TLB) caches virtual-page-to-physical-frame translations, not application bytes. A TLB hit supplies the translation; a miss requires an architecture-specific page-table walk, and an absent mapping can cause a page fault. The translated load checks L1D, then progressively larger caches. If the LLC also misses, the memory controller fetches the line from local Dynamic Random-Access Memory (DRAM) or, on a Non-Uniform Memory Access (NUMA) machine, across the socket interconnect from remote DRAM. The returning line fills one or more caches, and the requested bytes satisfy the load.
-
-Real processors can overlap translation with an L1 lookup, fetch a modified line from another core, or use a hierarchy that does not fill every level. The diagram is a dependency model, not a required bus route. Huge pages let each TLB entry cover more memory, while Linux memory policy and first touch influence which NUMA node owns the physical pages. CPU affinity alone does not move existing pages.
+A TLB caches translations rather than application bytes. Real processors can overlap translation and cache lookup, obtain a modified line from another core, or use a hierarchy that does not fill every level, so the diagram is a dependency model rather than a required bus route. Huge pages let one TLB entry cover more memory. Memory policy and first touch influence the NUMA node that owns physical pages; CPU affinity alone does not move pages that already exist.
 
 ### False sharing is contention over a line
 
@@ -111,45 +96,6 @@ producer publishes work -> futex wake -> task becomes runnable
   -> local or remote NUMA access -> work completes
 ```
 
-## Atomic access still needs an ordering contract
-
-Shared mutable data needs a synchronization rule. A **critical section** is code that must not overlap unsafely with another thread. A mutex allows one owner at a time and can put waiters to sleep. An atomic operation updates or reads one supported value without another thread observing a torn intermediate operation. A data race occurs when threads access the same location concurrently, at least one access writes, and the language supplies no required synchronization.
-
-Removing a mutex does not remove coordination. Lock-free code moves coordination into atomic operations, retry loops, memory-order rules, and object-lifetime management; use it only after a measured contention problem and a review against the language memory model.
-
-An atomic operation prevents a torn update, but it does not automatically publish surrounding data in the intended order. Acquire and release edges tell the compiler and CPU which earlier writes a reader must observe.
-
-_The release/acquire pair publishes payload when the reader observes ready._
-
-```c
-// Writer
-payload = 42;
-atomic_store_explicit(&ready, true, memory_order_release);
-
-// Reader
-if (atomic_load_explicit(&ready, memory_order_acquire)) {
-  consume(payload);
-}
-```
-
-## Lock-free is a progress claim, not a memory manager
-
-Obstruction-free means an operation finishes if it eventually runs without interference, so contending threads can still livelock. Lock-free means the system as a whole keeps making progress, though an unlucky thread may starve. Wait-free gives every operation a bounded-progress guarantee. The implication runs from wait-free to lock-free to obstruction-free, not the other way around.
-
-The source type alone does not prove that an atomic operation uses lock-free machine instructions on every target. C and C++ expose implementation checks for that question, and a library may use an internal lock for an atomic width the processor cannot handle directly.
-
-Real structures also need to handle ABA and prevent readers from following reclaimed nodes. Epochs, hazard pointers, and reference counting solve different versions of that lifetime problem, and each adds its own stalls or metadata.
-
-## A successful compare-and-swap can still accept stale history
-
-Thread A reads stack head A and next pointer B, then pauses. Thread B removes A, removes B, and later allocates a new node at A's old address before publishing that address as the head. A plain pointer comparison now tells thread A that the head still equals A, so its compare-and-swap can install the stale B pointer even though the stack changed twice. This is the ABA problem.
-
-A generation tag can distinguish reuse until its counter wraps, but it does not keep the old node readable. Hazard pointers publish which nodes readers may dereference; epoch schemes delay reclamation until old readers pass a quiescent point. A stalled reader can delay either scheme in a different way. The algorithm needs separate arguments for linearization, progress, memory order, and reclamation before a stress test means much.
-
-### Stress creates evidence, not a proof
-
-Vary thread count, CPU placement, allocator reuse, pauses, and memory pressure, then run race detectors supported by the language. A clean run can expose no counterexample; it cannot establish a lock-free algorithm's correctness on every allowed execution.
-
 ## Separate waiting for a CPU from wasting cycles on one
 
 Start with wall time and per-thread CPU time. If wall time rises while CPU time stays flat, inspect runnable delay, blocking, and throttling before collecting cache counters. `perf sched` can record scheduling events for a controlled run; `/proc/<pid>/sched` and scheduler tracepoints expose task-level evidence, subject to kernel configuration and access policy.
@@ -173,6 +119,49 @@ NUMA policy usually affects later allocations, while pages already faulted can r
 
 [Linux kernel: NUMA memory policy](https://docs.kernel.org/admin-guide/mm/numa_memory_policy.html)
 
+## Optional: concurrent data structures on shared memory
+
+The scheduling and locality path above does not require lock-free programming. This optional section applies cache coherence and shared-memory ordering to atomics, progress guarantees, and safe reclamation.
+
+### Atomic access still needs an ordering contract
+
+Shared mutable data needs a synchronization rule. A **critical section** is code that must not overlap unsafely with another thread. A mutex allows one owner at a time and can put waiters to sleep. An atomic operation updates or reads one supported value without another thread observing a torn intermediate operation. A data race occurs when threads access the same location concurrently, at least one access writes, and the language supplies no required synchronization.
+
+Removing a mutex does not remove coordination. Lock-free code moves coordination into atomic operations, retry loops, memory-order rules, and object-lifetime management; use it only after a measured contention problem and a review against the language memory model.
+
+An atomic operation prevents a torn update, but it does not automatically publish surrounding data in the intended order. Acquire and release edges tell the compiler and CPU which earlier writes a reader must observe.
+
+_The release/acquire pair publishes payload when the reader observes ready._
+
+```c
+// Writer
+payload = 42;
+atomic_store_explicit(&ready, true, memory_order_release);
+
+// Reader
+if (atomic_load_explicit(&ready, memory_order_acquire)) {
+  consume(payload);
+}
+```
+
+### Lock-free is a progress claim, not a memory manager
+
+Obstruction-free means an operation finishes if it eventually runs without interference, so contending threads can still livelock. Lock-free means the system as a whole keeps making progress, though an unlucky thread may starve. Wait-free gives every operation a bounded-progress guarantee. The implication runs from wait-free to lock-free to obstruction-free, not the other way around.
+
+The source type alone does not prove that an atomic operation uses lock-free machine instructions on every target. C and C++ expose implementation checks for that question, and a library may use an internal lock for an atomic width the processor cannot handle directly.
+
+Real structures also need to handle ABA and prevent readers from following reclaimed nodes. Epochs, hazard pointers, and reference counting solve different versions of that lifetime problem, and each adds its own stalls or metadata.
+
+### A successful compare-and-swap can still accept stale history
+
+Thread A reads stack head A and next pointer B, then pauses. Thread B removes A, removes B, and later allocates a new node at A's old address before publishing that address as the head. A plain pointer comparison now tells thread A that the head still equals A, so its compare-and-swap can install the stale B pointer even though the stack changed twice. This is the ABA problem.
+
+A generation tag can distinguish reuse until its counter wraps, but it does not keep the old node readable. Hazard pointers publish which nodes readers may dereference; epoch schemes delay reclamation until old readers pass a quiescent point. A stalled reader can delay either scheme in a different way. The algorithm needs separate arguments for linearization, progress, memory order, and reclamation before a stress test means much.
+
+#### Stress creates evidence, not a proof
+
+Vary thread count, CPU placement, allocator reuse, pauses, and memory pressure, then run race detectors supported by the language. A clean run can expose no counterexample; it cannot establish a lock-free algorithm's correctness on every allowed execution.
+
 ## Summary
 
 CPU performance has two separate delays: waiting to run and waiting on data after the thread runs. Affinity or pinning can improve one while hurting the other, so scheduling delay, cache behavior, and NUMA placement need measurements from the same workload interval.
@@ -184,10 +173,10 @@ CPU performance has two separate delays: waiting to run and waiting on data afte
 - False sharing occurs when independent writes share a cache line and force ownership traffic between cores; distinct source-level fields do not prevent it.
 - CPU utilization, frequency, power, energy, and completed work are different measurements. Compare useful work per joule only with a named energy source and the same latency and correctness contract.
 - A faster wakeup on another CPU can reduce run-queue delay while losing warm cache state or accessing memory on a remote NUMA node.
+- If wall time rises while thread CPU time stays flat, inspect runnable delay, blocking, and throttling first. If CPU time rises without useful work, compare instructions, cycles, cache misses, affinity, topology, and NUMA placement.
 - Atomics prevent torn operations but do not publish surrounding data without a memory-order contract. A release store paired with an observing acquire load can publish earlier writes.
 - Obstruction-free guarantees progress in isolation, lock-free guarantees system-wide progress, and wait-free guarantees bounded progress per operation. None solves memory reclamation, and only wait-free rules out starvation for an operation covered by the proof.
 - ABA protection and object lifetime are separate. Generation tags distinguish some reuse; hazard pointers, epochs, or reference counts keep readers from dereferencing reclaimed nodes.
-- If wall time rises while thread CPU time stays flat, inspect runnable delay, blocking, and throttling first. If CPU time rises without useful work, compare instructions, cycles, cache misses, affinity, topology, and NUMA placement.
 
 ## References
 

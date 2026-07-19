@@ -1,11 +1,9 @@
 ---
 title: Production safety and rollout
-shortTitle: Safety and rollout
 description: Ship a versioned model behind explicit privacy, tenant, evaluation, canary, observability, and rollback controls.
-collection: ai-inference
 slug: production-safety-and-capstone
 order: 9
-number: AI9
+identifier: AI9
 duration: 180 min
 difficulty: Advanced
 tags:
@@ -19,16 +17,6 @@ tags:
 
 A model release is a distributed software release with a larger artifact and another quality dimension. Treat identity, provenance, capacity, behavior, and rollback as one versioned unit.
 
-## Questions this note answers
-
-- Verify model, tokenizer, adapter, container, and configuration provenance
-- Set tenant, authentication, secret, prompt, and trace-data boundaries
-- Design offline, shadow, canary, and online rollout gates
-- Correlate application traces with engine and infrastructure metrics
-- Write a fallback and rollback path that works under overload
-- Include power and energy in capacity, telemetry, and release comparisons
-- Calculate and defend a full inference-service answer for an infrastructure interview
-
 ## Pin every input that can change model behavior
 
 Record immutable identities for model weights, tokenizer, prompt template, adapters, quantization configuration, runtime image, engine build, drivers, and serving configuration. Verify digests and provenance before a worker loads them.
@@ -40,6 +28,8 @@ Keep model artifacts in controlled storage, restrict who can publish aliases, an
 ## A model can run code while it loads
 
 PyTorch's traditional pickle-based checkpoint format can execute code during deserialization. Prefer tensor-only formats such as Safetensors where the engine supports them, reject unsafe formats by default, and perform any required conversion in a short-lived isolated job without production credentials or broad network access. A tensor-only file prevents that deserialization path; it does not prove that the weights are benign, licensed for the use, or compatible with the stated architecture.
+
+Since PyTorch 2.6, `torch.load` defaults to `weights_only=True` when the caller does not supply a custom pickle module. That restricted unpickler blocks dynamic imports and limits which objects it can construct, but PyTorch still warns that it does not prevent denial of service and may not prevent memory corruption. It narrows the loading boundary; it does not make an untrusted checkpoint safe.
 
 Custom model implementations loaded with `trust_remote_code=True` are code execution too. Review the code, pin the repository commit rather than a branch, build it into the tested runtime artifact, and keep the serving worker's filesystem, cloud identity, and egress permissions narrow. Malware scanning helps triage an artifact repository but does not replace review and isolation.
 
@@ -102,9 +92,9 @@ Do not promote this candidate. The latency, goodput, and energy results are bett
 
 A request trace should carry a sanitized request identifier, tenant class, model bundle, route, queue phase, prefill and decode timing, output count, status, and rollout cohort. Engine metrics then explain batches and KV pressure; Kubernetes and device metrics explain placement, memory, clocks, power or thermal limiting, accumulated energy, and faults.
 
-A tracing system such as Langfuse can hold application-level model spans and evaluation metadata. OpenTelemetry can connect service and infrastructure spans. Keep raw prompts disabled unless policy permits them, and never place private endpoint names, credentials, or customer identifiers in a teaching example.
+A tracing system such as Langfuse can hold application-level model spans and evaluation metadata. OpenTelemetry can connect service and infrastructure spans. Keep raw prompts disabled unless policy permits them. Record only approved, sanitized service identity and tenant classes; credentials and customer identifiers do not belong in trace attributes, and endpoint names may also be sensitive when they disclose restricted topology.
 
-> **Hypothetical example.** Suppose a model-serving team records application traces in Langfuse and infrastructure traces with OpenTelemetry. A generated trace ID joins a sanitized model version and its queue phases to node telemetry without storing raw prompts. Every tenant and payload in the exercise is synthetic.
+> **Hypothetical example.** Suppose a model-serving team records application traces in Langfuse and infrastructure traces with OpenTelemetry. A generated trace ID joins a sanitized model version and its queue phases to node telemetry without storing raw prompts. Every tenant and payload in this worked case is synthetic.
 
 ## Work a complete infrastructure interview prompt
 
@@ -116,7 +106,7 @@ Start by stating the API and workload boundary. Ask about chat templates, stream
 
 The rest of this worked case uses deliberately hypothetical inputs so the method is inspectable. They are not specifications or performance guarantees for a named model, engine, accelerator, or cloud instance. Assume this model has 80 transformer layers, 8 key/value heads per layer, head dimension 128, and a BF16 KV cache with 2 bytes per element. Its BF16 checkpoint contains exactly 140,000,000,000 bytes of weights. Assume each hypothetical accelerator has 80 GiB of physical memory, but only 70 GiB enters the serving allocation after a 10 GiB per-device fixed non-model reserve. The available server has a tested four-device high-bandwidth link domain, and this exact model build has been validated at tensor-parallel degree four. A three-device build might be possible for another model or topology; memory arithmetic alone does not establish its support or performance.
 
-For throughput, assume replay of the exact bundle, engine, four-device group, request mix, and latency targets measured a simultaneous **SLO-compliant envelope** of 18,000 input tokens per second and 4,500 output tokens per second per group. These are invented replay results for the exercise. Do not substitute them for a benchmark of the real system, and do not combine independent prefill and decode peaks unless replay proves that the group can sustain both together.
+For throughput, assume replay of the exact bundle, engine, four-device group, request mix, and latency targets measured a simultaneous **SLO-compliant envelope** of 18,000 input tokens per second and 4,500 output tokens per second per group. These are the same illustrative rates used by [AI7's warm-group calculation](07-gpu-orchestration.md#convert-the-burst-into-warm-serving-groups). They are invented replay results for the worked case. Do not substitute them for a benchmark of the real system, and do not combine independent prefill and decode peaks unless replay proves that the group can sustain both together.
 
 ```text
 input demand = 40 requests/s x 1,200 tokens = 48,000 input tokens/s
@@ -256,19 +246,23 @@ During a drill, record detection time, decision time, route convergence, queue m
 - Behavior fault: preserve sanitized examples and exact bundle identity for offline reproduction.
 - Telemetry fault: halt promotion because missing evidence makes the gate unknowable.
 
-## Use one final design review
+## A complete design records every system boundary
 
-A complete AI-infrastructure proposal should survive these questions:
+An AI-infrastructure proposal is complete when its design record contains each property below.
 
-1. What product behavior, model family, quality gate, request shape, traffic distribution, privacy rule, and latency boundary define success?
-2. Can you trace one accepted request through prompt rendering, tokenization, queueing, prefill, decode, streaming, cancellation, and cleanup, naming the owner of each state?
-3. Do weight, workspace, activation, graph, and KV-cache estimates fit the chosen dtype, hardware, concurrency, and failure headroom?
-4. If the model crosses devices, which ranks exchange which bytes over which physical links, what state stays copied, and how does one slow or dead rank recover?
-5. How does a declared Pod become a warm replica, and which topology, driver, artifact, image, startup, and autoscaling constraints can block that path?
-6. Which replay proves quality, phase latency, goodput, overload behavior, and energy per useful request or token at the stated system boundary?
-7. Can the team identify the exact bundle, protect prompts and loading paths, detect a bad release, stop promotion, and return traffic to warm known-good capacity without causing another overload?
+| System property       | Required design evidence                                                                                                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Service contract      | Product behavior, model family, quality gate, request shape, traffic distribution, privacy rule, and latency boundary                                                                  |
+| Request lifecycle     | One accepted request traced through prompt rendering, tokenization, queueing, prefill, decode, streaming, cancellation, and cleanup, with an owner for each state                      |
+| Memory fit            | Weight, workspace, activation, graph, and KV-cache estimates tied to dtype, hardware, concurrency, and failure headroom                                                                |
+| Distributed execution | Ranks, exchanged bytes, physical links, copied state, straggler handling, and recovery from a slow or dead rank                                                                        |
+| Replica readiness     | The path from a declared Pod to a warm replica, including topology, driver, artifact, image, startup, and autoscaling constraints                                                      |
+| Measured envelope     | Replay evidence for quality, phase latency, goodput, overload behavior, and energy per useful request or token at the stated system boundary                                           |
+| Release control       | Exact bundle identity, protected prompts and loading paths, bad-release detection, promotion stop authority, and enough warm known-good capacity for rollback without another overload |
 
-If an answer relies on “the GPU is busy,” a vendor throughput chart, or a product name without the request and failure mechanics, the design is incomplete.
+A design remains incomplete when it relies on “the GPU is busy,” a vendor throughput chart, or a product name without the request and failure mechanics.
+
+If model output remains a returned result, this collection supplies the serving path around it. If output can select tools or change external systems, continue with [Model, agent, harness, and failure taxonomy](../05-harness-engineering/01-model-agent-and-harness.md), which starts from the model-host boundary before adding authority, state, verification, and orchestration.
 
 ## Summary
 
@@ -288,6 +282,7 @@ Production safety treats a model release as a versioned software-and-data bundle
 - [NIST: AI Risk Management Framework](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.100-1.pdf)
 - [NIST: Generative AI Profile](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf)
 - [SLSA specification](https://slsa.dev/spec/v1.2/)
+- [PyTorch: serialization semantics and `weights_only`](https://docs.pytorch.org/docs/stable/notes/serialization.html#torch-load-with-weights-only-true)
 - [Kubernetes: good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
 - [Argo Rollouts documentation](https://argo-rollouts.readthedocs.io/)
 - [OpenTelemetry: traces](https://opentelemetry.io/docs/concepts/signals/traces/)

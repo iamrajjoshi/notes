@@ -1,11 +1,9 @@
 ---
 title: Replicate State, Define What Clients See, and Commit Across Shards
-shortTitle: Replication, consistency, and transactions
 description: Connect replica mechanics to client-visible histories, convergent data types, concurrency control, and the durable prepare and decision records behind distributed commit.
-collection: distributed-systems
 slug: replication-consistency-and-transactions
 order: 7
-number: DS7
+identifier: DS7
 duration: 3.5 hours
 difficulty: Advanced
 tags:
@@ -22,18 +20,6 @@ tags:
 ## Working model
 
 Replication decides where copies and authority live; a consistency model limits the histories clients may observe; transaction isolation limits how concurrent operations interleave; and atomic commit decides whether every participant makes one distributed transaction durable or none does. These are related layers, not synonyms.
-
-## Questions this note answers
-
-- Explain why systems replicate data and why correlated failures defeat simple availability arithmetic
-- Trace passive primary-backup and active state-machine replication
-- Distinguish linearizable, sequential, causal, session, and eventual consistency
-- Explain why intersecting read and write quorums do not alone prove linearizability
-- Use a CRDT only when its merge rule matches the application's meaning
-- Separate ACID properties, serializability, and real-time operation order
-- Compare strict two-phase locking, optimistic concurrency control, and MVCC
-- Follow a transaction through prepare, durable votes, a commit decision, coordinator failure, and recovery
-- Explain why two-phase commit can block and why consensus is related but not identical
 
 ## Replicas are copies with a protocol, not a guarantee
 

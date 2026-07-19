@@ -1,11 +1,9 @@
 ---
 title: Cache Deliberately and Survive Overload
-shortTitle: Caching and overload
 description: Place caches at the edge or service boundary, define freshness and invalidation, then contain overload with deadlines, jitter, retry budgets, shedding, circuit breakers, and shuffle shards.
-collection: system-design
 slug: caching-overload-control
 order: 8
-number: SD8
+identifier: SD8
 duration: 2.5 hours
 difficulty: Advanced
 tags:
@@ -22,20 +20,7 @@ tags:
 
 A cache is a controlled inconsistency layer, and overload protection is a controlled refusal layer. Both trade a perfect answer now for a system that can still answer later.
 
-## Questions this note answers
-
-- Explain a cache hit, miss, eviction, expiration, and refresh from first principles
-- Distinguish browser, CDN, service, and shared application caches by ownership and trust boundary
-- Define a cache key, freshness window, invalidation owner, and miss behavior
-- Trace the stale-fill race and stop an older read from repopulating after a newer write
-- Distinguish cache residence time from source age and define a bounded stale-if-error contract
-- Calculate origin load from request rate and cache hit ratio
-- Prevent stampedes with coalescing, TTL jitter, and stale serving
-- Distinguish offered load, admitted load, capacity, queueing, and saturation
-- Work a token-bucket rate limit and explain its identity, cost unit, rate, and burst allowance
-- Keep a fleet-wide limit from multiplying silently across service replicas
-- Set deadlines and one retry budget across a call chain
-- Use shedding, circuit breaking, and shuffle sharding to bound failure scope
+[DB9: Redis](../07-data-systems/09-redis-data-structures-persistence-and-cluster.md) follows one cache through command execution, expiration, eviction, persistence, replication, failover, and cluster routing. This note stays at the system-design boundary: cache semantics and origin protection.
 
 ## Start with the hit and miss path
 
@@ -176,9 +161,9 @@ Graph hit ratio, miss rate, stale responses, refresh starts, coalesced waiters, 
 
 Circuit-breaker state needs context: open count, reason, probe results, and time since the last successful call. A breaker that opens after queues are already full reacts too late, while one keyed too broadly can block healthy tenants with the failing cohort. Test overload controls with a bounded traffic slice. Confirm that rejected work returns the documented response, stale age remains inside policy, retry volume stays capped, and recovery probes cannot create a second surge when the dependency starts responding again.
 
-> **Recovery check.** When the origin recovers, ramp admitted work. Releasing every queued waiter and half-open probe at once can reproduce the same overload.
+> **Controlled recovery.** When the origin recovers, ramp admitted work. Releasing every queued waiter and half-open probe at once can reproduce the same overload.
 
-## Running design checkpoint
+## Continuing worked case: caching and overload protection
 
 The cache stores only terminal order receipts, which no longer change under the order state machine. Entries live for five minutes and use `(tenant_id, order_id, version, representation)` as the key. Pending orders, status transitions, idempotency results, and outbox state always use PostgreSQL. This boundary lets a miss fall back safely without making the cache an authority or allowing one tenant to read another tenant's receipt.
 

@@ -1,11 +1,9 @@
 ---
 title: Partition Data, Replicate It, and Defuse Hot Keys
-shortTitle: Partitioning and replication
 description: Distribute state across machines without confusing data volume with traffic distribution. Plan movement, replica placement, and skew before a celebrity key or current-time partition finds the limit.
-collection: system-design
 slug: partitioning-replication-hot-keys
 order: 5
-number: SD5
+identifier: SD5
 duration: 2.5 hours
 difficulty: Core
 tags:
@@ -24,17 +22,6 @@ tags:
 ## Working model
 
 Partitioning assigns ownership; replication copies ownership for failure and locality. Neither guarantees balanced traffic, because one logical key can still consume a whole partition's budget.
-
-## Questions this note answers
-
-- Explain why a single storage owner reaches a size, throughput, or failure boundary
-- Distinguish a partition or shard from a replica and from the machine serving it
-- Choose hash or range partitioning from query and rebalancing needs
-- Calculate expected and skewed load per partition
-- Separate replication factor from read and write quorum policy
-- Trace Cassandra writes through coordinators, commit logs, memtables, SSTables, compaction, and replica repair
-- Model a Cassandra table from partition-key and clustering-order queries without creating unbounded hot partitions
-- Design hot-key mitigation without losing the required ordering or consistency
 
 ## Split ownership only after naming the single-owner limit
 
@@ -87,6 +74,8 @@ Rollback is easy only before the target accepts new authoritative writes. After 
 A hot tenant can receive a dedicated shard through the directory. If that one tenant still exceeds one owner, choose a secondary partition key such as account, region, or time bucket only after identifying the invariants and queries that would cross it. Splitting `tenant_id` by random salt improves write spread but turns tenant-wide uniqueness, ordering, joins, and transactions into distributed problems.
 
 ## The partition key chooses placement and query scope
+
+The running design remains a sharded relational authority. The next sections pause that case and use Cassandra because its schema exposes placement, replica acknowledgments, repair, and hot-partition behavior directly. [DS6](../06-distributed-systems/06-partitioning-dhts-and-key-value-stores.md) derives the distributed mechanism, while [DB11](../07-data-systems/11-cassandra-partitions-compaction-and-repair.md) follows the full Cassandra operating path. The order-service case resumes at [Continuing worked case](#continuing-worked-case-partitioning-and-hot-tenant-handling).
 
 Apache Cassandra is a distributed wide-column database with no permanent leader for an ordinary data partition. A client writes and reads through a coordinator node, while replicas for the partition store the data. Cassandra Query Language looks similar to SQL, but the table design starts from partition-key lookups and clustering order rather than arbitrary joins. This makes placement and bounded query shape visible in the primary-key definition.
 
@@ -168,7 +157,7 @@ minimum I/O = about 80 GB
 
 Three copies on one rack are one failure domain wearing three labels. Put replicas across zones or other independent boundaries, then state which operations wait for one copy, a quorum, or every copy.
 
-> **Quorum arithmetic is not a full consistency proof.** R plus W greater than N creates overlap, but sloppy quorums, clock-based conflict resolution, stale replicas, and concurrent writes still affect observed semantics.
+> **Quorum arithmetic is not a full consistency proof.** R plus W greater than N creates overlap for one stable replica set, but concurrent writes, timestamp conflict resolution, failed natural replicas, repair lag, and replica-set changes still affect observed semantics. Cassandra stores a hint for an unavailable natural replica; it does not substitute an arbitrary fallback replica in the Dynamo-style sloppy-quorum sense.
 
 ## Plan catch-up, repair, and removal
 
@@ -201,7 +190,7 @@ Fleet CPU averages can remain low while one partition times out. Break request r
 
 Watch a rebalance as a controlled migration. Record foreground latency, transfer bandwidth, pending partitions, and the time each partition spends under-replicated. If traffic follows the moving owner faster than routing caches refresh, clients may bounce through forwarding hops or retry stale destinations. Rate-limit movement, refresh maps on explicit ownership errors, and stop the rebalance when user-facing latency crosses its guardrail. More balanced bytes do not justify an outage caused by the repair itself.
 
-## Running design checkpoint
+## Continuing worked case: partitioning and hot-tenant handling
 
 The team does not start with 64 because it is a familiar power of two. A load test using the real schema, indexes, WAL settings, and replica topology finds that one shard can sustain 260 creates each second, but latency and replica lag stay inside their guardrails only up to 200. Restore and index-maintenance rehearsals also set a 200 GB raw-hot-data target per shard: the operations still finish inside their stated window at that size, with temporary disk headroom. These are measured planning limits, not PostgreSQL constants.
 
@@ -226,7 +215,7 @@ Partitioning decides who owns a key; replication decides where copies live and h
 - **Keep relational sharding tenant-local when possible.** Route a stable logical shard or versioned tenant directory, carry `tenant_id` through keys and indexes, and keep invariants in one local transaction. Snapshot, log-catch-up, validate, fence, switch, observe, and define the rollback point before moving a tenant.
 - **Cassandra's partition key defines routing and query scope.** Any node may coordinate a request, but replicas are selected from the partition key's token. Clustering columns order rows within a partition; time buckets bound partition size at the cost of read fan-out.
 - **Understand the Cassandra storage path.** Writes append to the commit log and memtable, then flush to immutable SSTables. Reads reconcile memtables and overlapping SSTables; compaction exchanges CPU, I/O, temporary disk, and write amplification for lower read amplification.
-- **Separate replication factor from consistency level.** With RF=3, QUORUM waits for two replicas. Read and write quorums overlap for the same replica set, but concurrent writes, timestamp conflict resolution, local versus cross-region scope, and sloppy behavior still determine observed semantics.
+- **Separate replication factor from consistency level.** With RF=3, QUORUM waits for two replicas. Read and write quorums overlap for the same stable replica set, but concurrent writes, timestamp conflict resolution, failed replicas, best-effort hints, repair lag, and local versus cross-region scope still determine observed semantics.
 - **Make repair and tombstone timing one safety rule.** A deletion marker must remain until every stale copy that could resurrect old data has been repaired or retired. Track repair age, hinted handoff, compaction backlog, tombstones scanned, free disk, and per-replica values together.
 - **Measure and split hot keys deliberately.** A 32,000 writes/s counter stays hot after adding ordinary partitions. Eight salted subkeys reduce the hot share to about 4,000 writes/s each if they land on different owners, but reads must merge eight values and strict ordering may be lost. Diagnose rate, queueing, lag, and throttling by partition and logical tenant, not fleet average.
 
@@ -237,6 +226,7 @@ Partitioning decides who owns a key; replication decides where copies live and h
 - [Apache Cassandra: Storage Engine](https://cassandra.apache.org/doc/latest/cassandra/architecture/storage-engine.html): Explains commit logs, memtables, SSTables, reads, and compaction.
 - [Apache Cassandra: Data Definition](https://cassandra.apache.org/doc/latest/cassandra/developing/cql/ddl.html): Defines partition keys, clustering columns, row order, and CQL table options.
 - [Apache Cassandra: Guarantees](https://cassandra.apache.org/doc/latest/cassandra/architecture/guarantees.html): States the scope of write durability, isolation, timestamp resolution, and lightweight transactions.
+- [Apache Cassandra: Hints](https://cassandra.apache.org/doc/stable/cassandra/managing/operating/hints.html): Explains how a coordinator stores a missed mutation for its unavailable destination replica.
 - [Apache Cassandra: Compaction Overview](https://cassandra.apache.org/doc/stable/cassandra/managing/operating/compaction/overview.html): Covers immutable SSTables, compaction, tombstones, grace periods, and deleted-data resurrection.
 - [DynamoDB: Designing Partition Keys for Uniform Load](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-uniform-load.html)
 - [Vitess: Resharding](https://vitess.io/docs/24.0/user-guides/configuration-advanced/resharding/): Current worked workflow for copying, catching up, validating, and switching a sharded relational keyspace.

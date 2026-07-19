@@ -1,16 +1,14 @@
 ---
-title: "Interview Studios: Defend Nine Production Designs"
-shortTitle: Interview studios
-description: Run a system-design interview from scope through recovery, choose cloud and data technologies by responsibility, and practice nine bounded prompts with an evidence-based rubric.
-collection: system-design
+title: System Design Interviews Through Nine Worked Designs
+description: Run a system-design interview from scope through recovery, choose cloud and data technologies by responsibility, and study nine bounded designs with explicit calculations and failure paths.
 slug: interview-studios
 order: 11
-number: SD11
+identifier: SD11
 duration: 6 hours
 difficulty: Advanced
 tags:
   - interview
-  - rubric
+  - worked-designs
   - trade-offs
   - capacity
   - failure
@@ -21,25 +19,11 @@ tags:
 
 An interview design is a chain of falsifiable decisions. Every component needs a reason to exist, a limit, a failure mode, and a signal that tells an operator when the assumption stopped holding.
 
-## Questions this note answers
-
-- Introduce and reframe an incomplete prompt before proposing components
-- Ask functional, quality, scale, correctness, scope, and operating questions with a reason for each
-- Drive a 45-minute design from clarification through operations without rushing into components
-- Explain what each interview phase should produce and how to recover when the interviewer redirects the discussion
-- Support each major choice with a requirement, calculation, invariant, or failure observation
-- Keep AWS compute, container, storage, messaging, security, and operating layers distinct
-- Compare two plausible designs and state the condition that changes the choice
-- Practice all nine prompts while keeping six rehearsal briefs shorter than the three deep studios
-- Trace a multi-Region chat failover with explicit writer fencing, RTO, RPO, and spare capacity
-- Score a design using quoted evidence rather than confidence or diagram polish
-- Revise the weakest rubric dimension and show what changed
-
 ## Know what the interview is asking you to show
 
 There is no single industry-wide system-design interview format. The interviewer may care more about product APIs, distributed data, cloud operation, or low-level capacity, and may redirect the discussion toward one of those areas. Google's non-abstract large-system design format, for example, asks candidates to make a specific large-scale design credible through capacity, reliability, robustness, provisioning, and change management. Amazon's current public SDE II page describes four 55-minute interviews in its loop, expects at least one software-system-design question, and tells candidates to ask questions that complete and validate the design; it names practicality, accuracy, efficiency, reliability, optimization, and scalability as objectives. That is one published company-and-level format, not a general rule.
 
-Before practice, ask the recruiter for the scheduled duration, whether design is a whole round or part of one, the expected level of detail, whether prompts lean toward product APIs or infrastructure, which drawing tool will be available, whether vendor-specific cloud knowledge is expected, and whether the round includes coding. If those details are unavailable, practice a portable design first and translate components into AWS names only after their responsibilities are clear.
+Before an interview, ask the recruiter for the scheduled duration, whether design is a whole round or part of one, the expected level of detail, whether prompts lean toward product APIs or infrastructure, which drawing tool will be available, whether vendor-specific cloud knowledge is expected, and whether the round includes coding. If those details are unavailable, prepare a portable design first and translate components into AWS names only after their responsibilities are clear.
 
 The common task is to turn an incomplete prompt into a defensible design while communicating with another engineer. Ask enough questions to define the important user actions, scale, correctness rules, latency, availability, geography, privacy, retention, and exclusions. Make assumptions visible when the interviewer does not supply them. Then draw and trace a small design before adding optional components.
 
@@ -85,7 +69,7 @@ An interruption can signal that enough detail has been shown. Summarize the deci
 
 ## Use one practical 45-minute sequence
 
-This is a useful practice structure, not a rule that every company follows. Say where you are in the design, watch for interviewer cues, and shorten a phase when the prompt already supplies its output.
+This is a useful interview sequence, not a rule that every company follows. Say where you are in the design, watch for interviewer cues, and shorten a phase when the prompt already supplies its output.
 
 | Time          | Produce                   | Questions to answer                                                                         |
 | ------------- | ------------------------- | ------------------------------------------------------------------------------------------- |
@@ -99,9 +83,9 @@ This is a useful practice structure, not a rule that every company follows. Say 
 
 Do not spend the opening ten minutes collecting every imaginable requirement. Ask questions that can change the design. If the interviewer says to assume a number or move on, record the assumption and continue. If they interrupt with a failure, trace it against the design you already drew rather than beginning a second architecture.
 
-## Rotate through nine different pressure points
+## Nine systems expose different pressure points
 
-Run each prompt with the same artifact order until the transitions feel natural, then vary the timing based on the prompt and interviewer. A URL shortener is a useful warm-up for API, data, cache, and hot-key reasoning, but do not memorize its boxes and paste them onto unrelated work.
+Each prompt follows the same artifact order, while its workload and correctness rules force a different deep dive. A URL shortener is a useful small example for API, data, cache, and hot-key reasoning, but its boxes do not transfer unchanged to unrelated work.
 
 | Prompt                             | Clarify before drawing                                                                                                               | Main pressure point                                                                                                     |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -115,7 +99,7 @@ Run each prompt with the same artifact order until the transitions feel natural,
 | Multi-tenant scheduler or workflow | Are jobs independent or multi-step, which resources and deadlines matter, how should tenants share capacity, and may work preempt?   | Durable progress, timers, leases, packing, fairness, retries, compensation, and noisy neighbors                         |
 | Inference service                  | Which model and quality target apply, is streaming needed, what are prompt and output sizes, and what may be batched or rejected?    | Accelerator memory, batching, KV-cache pressure, admission, model routing, autoscaling delay, and tail latency          |
 
-These prompts cover common reasoning shapes rather than every possible interview question. After each one, change a requirement that invalidates the first design: demand strict order, add a second Region, make one tenant dominate traffic, cut the RPO to zero, or require deletion from every derived copy. The revision reveals whether the decisions came from requirements or memory.
+These designs cover common reasoning shapes rather than every possible interview question. Each includes a requirement change that invalidates the first architecture, such as strict order, a second Region, dominant-tenant traffic, zero RPO, or deletion from every derived copy. The resulting change shows which decisions follow from the contract.
 
 ## Keep cloud layers distinct
 
@@ -202,7 +186,22 @@ Reject the phrase 'NoSQL for scale' because it omits the access path and correct
 - Columnar analytics: selected columns, ORDER BY prefix, parts and granules, merge debt, query memory, freshness lag
 - Derived stores: source position, rebuild procedure, deletion propagation, schema compatibility, comparison check
 
-## Trace an order from the load balancer into analytics
+## Evidence standards for design review
+
+A design review should point to material present in the answer. Confidence, diagram polish, and a familiar product name do not establish that a choice satisfies the contract.
+
+| Review dimension                         | Evidence to record                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Framing and workload math                | Scope, exclusions, stated assumptions, peak shape, units, object sizes, retention, and calculations that set capacity          |
+| Interfaces, data model, and correctness  | Request identity, API fields, authority, keys, indexes, transaction boundary, invariant, ordering scope, and conflict rule     |
+| Scaling, performance, and cost           | Scaling unit, skew case, bottleneck, headroom, latency budget, paid resource, and a threshold that forces another design       |
+| Failure and recovery                     | Named failure, ambiguous interval, retry owner, degraded mode, RTO, RPO, fencing rule, restore path, and recovery load         |
+| Security and data policy                 | Principal, authorization decision, secret boundary, encryption owner, retention, deletion propagation, and audit evidence      |
+| Operations, observability, and evolution | User SLI, causal resource signals, deploy and rollback rule, reconciliation check, schema change, and experiment that can fail |
+
+An unsupported assertion leaves a gap even when the named technology could work. A supported choice names the requirement, mechanism, failure boundary, and observation that would disprove the assumption.
+
+## Worked design: order API and analytics
 
 Assume an order API peaks at 2,000 creates each second. Each order and its line items occupy about 2,000 bytes before indexes, WAL, replicas, and free space, producing 4 MB/s or 345.6 GB of raw business rows per day at a sustained peak. The product requires one order ID to be unique, inventory reservation and order state to commit together, and the client to retry an ambiguous timeout safely. Those invariants point to a relational transaction with a unique idempotency key and an outbox row in the same commit, not to a direct database write followed by a best-effort broker publish.
 
@@ -224,7 +223,9 @@ CDC outage: 12 MB/s * 1,500 s = 18 GB retained log
 catch-up: 18,000 MB / (42 - 12 MB/s) = 600 s
 ```
 
-## Work a document-processing prompt across modules
+The 2,000-create-per-second workload and target-loss calculation size the application path; the unique operation key, relational transaction, and outbox state the correctness boundary. The CDC retention and catch-up equations expose a recovery limit, while source bytes, oldest unpublished event, and order reconciliation provide operating checks.
+
+## Worked design: document processing
 
 Suppose users upload 1.2 million documents each day, the average object is 5 MiB, peak arrival is six times the daily average, processing may take from seconds to several minutes, and the user must be able to retry an upload without creating a second job. Raw input is about 5.72 TiB per day. Average arrival is about 13.9 files each second and the stated peak is about 83.3 files each second, or roughly 417 MiB/s of input payload. The API tier should not relay all of those bytes through its own memory and connections merely to reach object storage.
 
@@ -251,29 +252,15 @@ _The workload values are interview assumptions. Keep binary object units separat
 
 Related notes: [cloud compute choices](../01-cloud-infrastructure/06-eks-and-ecs.md), [block, object, and file I/O](../02-low-level-infrastructure/04-storage-and-io.md), [inference serving lifecycle](../04-ai-inference/02-serving-lifecycle.md), and [tool and sandbox boundaries](../05-harness-engineering/04-tools-environments-and-sandboxes.md).
 
-## Score only evidence visible in the answer
+The 5.72-TiB daily volume and 417-MiB/s peak explain direct object upload; the operation ID, checksum, object version, and conditional publication define retry and visibility rules. A bounded replay that cannot overwrite a newer result tests queue duplication, worker loss, and projection recovery.
 
-Use six dimensions worth four points each: framing and workload math; interfaces, data model, and correctness; scaling, performance, and cost; failure and recovery; security and data policy; operations, observability, and evolution. Zero means absent. One is an unsupported assertion. Two is plausible but leaves a material gap. Three is justified and testable. Four quantifies the trade-off and names the failure signal or experiment that would challenge it.
-
-A useful self-practice target is at least 18 of 24 with no dimension below two. This is not a company hiring bar. Quote or point to the exact calculation, invariant, API field, authorization rule, failure path, cost unit, or metric that earns each score; polish earns nothing by itself.
-
-_Six dimensions, four points each; practice target 18 with no dimension below two._
-
-```text
-0 absent
-1 assertion without support
-2 plausible, material gap remains
-3 justified and testable
-4 quantified trade-off plus failure signal or experiment
-```
-
-## Turn the telemetry prompt into numbers and boundaries
+## Worked design: telemetry ingestion
 
 Suppose the stated 2 million events per second average 400 bytes before broker overhead and replication. Ingress payload is about 800 MB/s. One day contains 69.12 TB and seven days contain 483.84 TB of raw event bytes. Keep compression, indexes, replicas, and spare capacity separate because each has a different measured multiplier. This arithmetic immediately asks whether all seven days belong in one hot serving tier.
 
 Assign every event an event_id and tenant_id. A partition value based only on tenant_id preserves per-tenant order but lets one large tenant own a partition, so define a threshold that moves that tenant to tenant_id plus a stable bucket while documenting the reduced ordering scope. Producers receive an explicit overload response; consumers commit progress only after an idempotent state transition. Replay uses retained positions at a capped rate that leaves capacity for live ingestion.
 
-A ten-minute ingestion RTO needs a spare path or a tested fleet start and ownership-recovery sequence. State the RPO for acknowledged events, map replicas across failure domains, and monitor accepted rate, rejected rate, partition skew, oldest unprocessed age, retry attempts, dead letters, and storage saturation. These artifacts earn rubric points because another engineer can challenge the numbers and run the checks.
+A ten-minute ingestion RTO needs a spare path or a tested fleet start and ownership-recovery sequence. State the RPO for acknowledged events, map replicas across failure domains, and monitor accepted rate, rejected rate, partition skew, oldest unprocessed age, retry attempts, dead letters, and storage saturation. These signals let another engineer challenge the design and verify its recovery behavior.
 
 _The 400-byte input is a stated assumption for this example, not a property of telemetry events in general._
 
@@ -284,17 +271,19 @@ _The 400-byte input is a stated assumption for this example, not a property of t
 provisioned bytes = raw * measured multipliers + headroom
 ```
 
-## Use six compact practice briefs for the remaining prompts
+The 800-MB/s ingress rate and 483.84-TB raw retention estimate expose storage and broker scale. Stable event identity, a hot-tenant bucketing threshold, explicit overload, capped replay, stated RTO and RPO, partition skew, oldest unprocessed age, and saturation signals make the normal and recovery paths testable.
 
-The order, document-processing, and telemetry sections above are the three detailed studios. The six sections below are compact practice briefs, not six more designs at the same depth. Each still contains the artifacts an interviewer needs to challenge: clarification, a contract, arithmetic, an interface and state model, normal and failure traces, alternatives, an invalidating requirement, and rubric evidence. Expand one brief into the 45-minute sequence when its pressure point needs more practice.
+## Six additional worked designs
 
-### Compact practice brief: social feed and activity history
+The order, document-processing, and telemetry sections above are the three longest designs. The six sections below use a more compact form while retaining clarification, a contract, arithmetic, an interface and state model, normal and failure traces, alternatives, and a requirement that invalidates the first architecture.
 
-**Opening clarification questions.** Is this a feed of followed authors or only the user's own activity? Is it chronological or ranked? How fresh must a new post and a deletion be? Does the contract include private accounts, follow changes, or celebrity authors with tens of millions of followers? These answers decide whether a stored timeline is authoritative, derived, or only a candidate set.
+### Worked design: social feed and activity history
 
-**Functional and non-functional requirements.** Users create posts, follow or unfollow authors, and read a cursor-paginated feed. For this exercise, assume a retry-safe post create, chronological ordering, read p95 below 200 ms, ordinary-post freshness below five seconds, deletion filtering within one minute, and no lost accepted post. Ranking and advertising are outside the first design.
+**Clarification.** The main choices are whether this is a feed of followed authors or only the user's activity, whether order is chronological or ranked, how quickly posts and deletions appear, and whether private accounts, follow changes, or celebrity authors are included. These answers decide whether a stored timeline is authoritative, derived, or only a candidate set.
 
-**Illustrative sizing.** Assume 50 million daily active users, two posts and 20 feed reads per user each day, a ten-times peak factor, and 200 followers for an ordinary author. These are practice inputs, not measured product facts.
+**Functional and non-functional requirements.** Users create posts, follow or unfollow authors, and read a cursor-paginated feed. This design assumes a retry-safe post create, chronological ordering, read p95 below 200 ms, ordinary-post freshness below five seconds, deletion filtering within one minute, and no lost accepted post. Ranking and advertising are outside the first design.
+
+**Illustrative sizing.** Assume 50 million daily active users, two posts and 20 feed reads per user each day, a ten-times peak factor, and 200 followers for an ordinary author. These are illustrative inputs, not measured product facts.
 
 ```text
 posts: 50M * 2 / 86,400 = 1,157/s average; 10x peak = 11,574/s
@@ -311,11 +300,11 @@ one 50M-follower author = 50M inserts for one post, so the average-follower plan
 
 **Changed requirement that invalidates the first design.** If ranking must use the viewer's current session, inventory, and recent actions, a precomputed chronological timeline is no longer the final answer. Keep it as a candidate source, add an online ranker, version the features and model, and remeasure the latency budget.
 
-**Rubric evidence.** Framing is visible in the chronological-feed boundary; scale in the 2.31-million-insert line and celebrity counterexample; correctness in the operation ID, unique projection key, and tombstone; failure handling in retry plus fan-out age; evolution in the requirement that introduces online ranking.
+The chronological-feed boundary frames the design; the 2.31-million-insert estimate and celebrity counterexample expose scale and skew. The operation ID, unique projection key, deletion tombstone, retry path, and oldest fan-out age cover correctness, recovery, and freshness.
 
-### Compact practice brief: multi-Region chat and presence
+### Worked design: multi-Region chat and presence
 
-**Opening clarification questions.** Are direct messages, rooms, or both in scope? Must order hold globally, per conversation, or only per sender? Does `accepted` mean stored in one Region or protected from Region loss? How long may clients be offline? Is presence exact or an expiring hint? Ask for the user geography, Region-loss RTO and RPO, and whether writes may continue on both sides of a network partition.
+**Clarification.** The design must choose direct messages, rooms, or both; global, per-conversation, or per-sender order; the durability meaning of `accepted`; offline duration; and whether presence is exact or an expiring hint. User geography, Region-loss RTO and RPO, and write behavior during a network partition set the regional architecture.
 
 **Functional and non-functional requirements.** Clients connect, send messages, receive conversation-ordered messages, acknowledge delivery or read state, and reconnect from a sequence. Presence is a best-effort lease. Assume two Regions, half of normal connections in each, p95 local send acknowledgement below 200 ms, 99.99% monthly availability, RTO at most two minutes, and RPO at most five seconds for a complete home-Region loss. Acknowledged messages are durable across zones but replicate asynchronously to the paired Region.
 
@@ -339,11 +328,11 @@ If the home Region is lost, promotion waits until the old authority lease is pos
 
 **Changed requirement that invalidates the first design.** RPO zero plus writes accepted in both Regions during an inter-Region partition invalidates the asynchronous single-home writer. The design cannot preserve one total conversation order and accept both isolated sides. Choose a quorum that rejects the minority, or weaken ordering and reconcile conflicts; say which product promise changed.
 
-**Rubric evidence.** The answer names the ordering scope, accepted boundary, RTO, RPO, epoch invariant, socket failover capacity, retry identity, and degraded mode. A failover drill must measure route-switch time, lost acknowledged sequences, stale-writer rejection, reconnect success, and oldest replication lag.
+The design names the ordering scope, accepted boundary, writer epoch, socket failover capacity, retry identity, RTO, RPO, and degraded mode. A failover drill measures route-switch time, lost acknowledged sequences, stale-writer rejection, reconnect success, and oldest replication lag.
 
-### Compact practice brief: search and autocomplete
+### Worked design: search and autocomplete
 
-**Opening clarification questions.** Which store is the source of truth? Is the product keyword search, prefix completion, fuzzy matching, semantic retrieval, or a combination? Which fields affect ranking? How quickly must edits, access changes, and deletions appear? Are results tenant-scoped, permission-filtered, multilingual, or personalized?
+**Clarification.** The design needs one source of truth and an explicit retrieval contract: keyword search, prefix completion, fuzzy matching, semantic retrieval, or a combination. Ranking fields, edit and deletion freshness, tenant isolation, permission filtering, language, and personalization determine the index and query paths.
 
 **Functional and non-functional requirements.** Users search a tenant's document corpus and request autocomplete suggestions; source writes remain in the document system. Assume search p95 below 100 ms, suggestion p95 below 50 ms, ordinary edits visible within 60 seconds, deletions filtered within five minutes, stable cursor pagination, and a fully rebuildable index. The first design uses lexical ranking and tenant isolation, not semantic search.
 
@@ -365,11 +354,11 @@ changes: 2M / 86,400 = 23/s average; 10x peak assumption = 231/s
 
 **Changed requirement that invalidates the first design.** If an access revocation must affect every result in under one second, a five-minute derived-index deletion window and shared suggestion cache are invalid. Either enforce authorization against current source state on every result, or propagate permission versions synchronously and include them in index and cache keys; then remeasure latency and cache hit rate.
 
-**Rubric evidence.** The answer exposes the source of truth, freshness contract, 150,000-QPS suggestion path, index-copy math, stable cursor, event version, rebuild position, access boundary, and the lag and comparison signals that decide whether a new index generation is safe.
+The source-of-truth boundary, freshness contract, 150,000-request-per-second suggestion path, index-copy math, stable cursor, event version, and rebuild position define what the system must preserve. Access tests, source-position lag, count comparisons, and sampled queries decide whether a new index generation is safe.
 
-### Compact practice brief: notification service
+### Worked design: notification service
 
-**Opening clarification questions.** Which channels and priorities exist? Does success mean accepted, handed to a provider, or delivered to a device? When are preferences, quiet hours, suppression lists, and tenant quotas evaluated? May retries duplicate a message? Ask whether notifications may be scheduled, collapsed, cancelled, or ordered across channels.
+**Clarification.** Channels, priorities, and the meaning of success determine the delivery contract. The design also fixes where preferences, quiet hours, suppression lists, and tenant quotas are evaluated, whether retries may duplicate a message, and whether notifications can be scheduled, collapsed, cancelled, or ordered across channels.
 
 **Functional and non-functional requirements.** An authenticated tenant submits email or push notifications, reads status, and cancels work that has not begun. The service evaluates the recipient's current preferences at dispatch time. Assume accepted work is durable and retry-safe, urgent work starts dispatch within five seconds at p95, the acceptance API is 99.99% available, internal delivery is at least once, provider calls use duplicate protection when available, and status is retained for 30 days.
 
@@ -393,11 +382,11 @@ If the provider accepts a request but its reply is lost, the worker retries with
 
 **Changed requirement that invalidates the first design.** Strict per-recipient order across email and push invalidates independent channel queues. Route a recipient through one sequencer or durable workflow, persist the cross-channel sequence, and accept lower parallelism and head-of-line blocking; otherwise weaken the order promise.
 
-**Rubric evidence.** The brief defines accepted versus delivered, computes peak provider attempts, identifies the deduplication keys, applies preferences at the named boundary, traces the ambiguous provider reply, and names queue age, dispatch latency, quota rejection, duplicate rate, dead-letter age, and provider receipt lag as operating evidence.
+The accepted-versus-delivered boundary, peak provider-attempt calculation, stable operation and provider keys, dispatch-time preference check, and ambiguous-reply trace state the contract. Queue age, dispatch latency, quota rejection, duplicate rate, dead-letter age, and provider-receipt lag expose failure.
 
-### Compact practice brief: multi-tenant scheduler and workflow
+### Worked design: multi-tenant scheduler and workflow
 
-**Opening clarification questions.** Are jobs independent or made of dependent steps? What CPU, memory, accelerator, locality, deadline, and runtime distributions matter? May a task run more than once, be preempted, or make an irreversible external call? Ask how tenants share capacity, what cancellation means, and whether a completed step may require compensation.
+**Clarification.** Jobs may be independent or made of dependent steps, and their CPU, memory, accelerator, locality, deadline, and runtime distributions determine placement. The contract also states whether a task may run more than once, be preempted, or make an irreversible external call; how tenants share capacity; what cancellation means; and whether a completed step may require compensation.
 
 **Functional and non-functional requirements.** Tenants submit jobs, inspect progress, cancel pending work, and receive durable step results. The scheduler releases a step only after its dependencies finish, enforces per-tenant quotas and weighted fairness, and retries a lost attempt without losing accepted work. Assume dispatch starts within ten seconds at p95 when quota and capacity exist, scheduler control is highly available across zones, and every external side effect has an operation identity or reconciliation path.
 
@@ -420,15 +409,15 @@ If a worker dies, its lease expires and a new attempt starts with a higher epoch
 
 **Changed requirement that invalidates the first design.** A job that needs 64 GPUs on one high-bandwidth topology and must start all workers together invalidates independent per-step leases and average-resource packing. Add topology-aware inventory, reservation, gang admission, atomic start or rollback, and a starvation policy; then size against whole-job shapes rather than average CPU and memory.
 
-**Rubric evidence.** The brief gives an admission contract, capacity equation, stable operation and lease identities, stale-worker fence, fair-share boundary, external-effect recovery, and a requirement that changes the scheduling unit. A replay test can kill a worker and leader while checking that no newer result is overwritten and no tenant exceeds its configured share.
+The admission contract, concurrency equation, stable operation identity, lease epoch, stale-worker fence, fair-share boundary, and external-effect recovery explain the main choices. A replay can kill a worker and scheduler leader while checking that no newer result is overwritten and no tenant exceeds its configured share.
 
-### Compact practice brief: inference service
+### Worked design: inference service
 
-**Opening clarification questions.** Which model version and quality threshold are required? Is the response streamed? What are the prompt, output, and context-length distributions? Which time-to-first-token and token-spacing targets matter? May the system batch requests, quantize weights, route to another model, reject overload, or retain prompts? Ask which hardware exists and how quickly a new replica can load.
+**Clarification.** The required model version, quality threshold, response mode, prompt and output distributions, context length, time to first token, and token-spacing targets define the serving path. The contract also states whether the system may batch requests, quantize weights, route to another model, reject overload, or retain prompts, plus which hardware exists and how quickly a replica loads.
 
 **Functional and non-functional requirements.** Authenticated tenants submit generation requests, stream tokens, select an allowed model version, and receive usage. Assume p95 time to first token below 800 ms, p95 inter-token spacing below 40 ms, 99.9% availability, explicit `429` overload before an admitted request misses its budget, and no silent model downgrade. Prompts are not written to application logs; quota and billing are retry-safe by request ID.
 
-**Illustrative sizing.** Assume an 8-billion-parameter model with 16-bit weights, one 80 GiB accelerator per replica, 20 GiB reserved for runtime buffers and safety, a measured 0.5 MiB of KV cache per active token for this exact model and engine, 2,000 active tokens per request, 120 requests each second, 200 output tokens per request, and a replay benchmark of 6,000 compliant output tokens each second per replica. Every value is an exercise input that must be replaced by artifact inspection and profiling.
+**Illustrative sizing.** Assume an 8-billion-parameter model with 16-bit weights, one 80 GiB accelerator per replica, 20 GiB reserved for runtime buffers and safety, a measured 0.5 MiB of KV cache per active token for this exact model and engine, 2,000 active tokens per request, 120 requests each second, 200 output tokens per request, and a replay benchmark of 6,000 compliant output tokens each second per replica. Every value is illustrative and must be replaced by artifact inspection and profiling.
 
 ```text
 weights: 8B parameters * 2 bytes = 16 GB, about 14.9 GiB
@@ -451,21 +440,21 @@ If a replica dies before any token reaches the client, the router may retry the 
 
 **Changed requirement that invalidates the first design.** A 70-billion-parameter model at 16 bits needs about 140 GB for weights before KV cache and runtime buffers, so the single-80-GiB-device replica is invalid. Use a measured quantized artifact or a tensor-parallel multi-GPU replica with gang placement and a fast interconnect; recalculate throughput, failure reserve, loading time, and the number of whole replica groups.
 
-**Rubric evidence.** The brief states the quality and overload contract, shows weight, KV, token-rate, and failure-reserve equations, fixes model and tokenizer identity, distinguishes pre-stream from mid-stream failure, protects prompt data, and names a changed model that breaks the first placement. A load replay and one-replica kill provide the evidence for the claimed six-replica floor.
+The quality and overload contract, weight and KV-cache equations, token-rate benchmark, failure reserve, fixed model and tokenizer identities, and pre-stream versus mid-stream failure behavior support the six-replica plan. A load replay followed by one replica kill tests whether that floor still meets the token and latency targets.
 
-## Fix the lowest score, not the prettiest diagram
+## Evidence gaps drive the next revision
 
-After each studio, choose the lowest dimension and add one missing artifact. That may be a peak-RPS estimate, a deduplication key, a restore objective, a partition-skew plan, or a canary abort metric. Rescore only after the evidence appears in the answer.
-
-> **Interview red flag.** Naming a database, queue, or cloud product before stating the access pattern and invariant is a selection guess, not a design decision.
+After reviewing a design, choose the least-supported dimension and add one missing artifact: perhaps a peak-rate calculation, deduplication constraint, authorization rule, restore objective, partition-skew plan, cost unit, or canary abort signal. Then rerun the request or failure trace affected by the change. Keep the earlier version so the reason for the revision remains visible.
 
 ## Recognize answers that sound complete but cannot be tested
 
+> **Premature product selection.** Naming a database, queue, or cloud product before stating the access pattern and invariant is a selection guess, not a design decision.
+
 A design is under-specified when it says 'add a cache' without identity or freshness, 'use a queue' without delivery and lag policy, or 'shard the database' without a routing value and hot-owner plan. The same problem appears when every dependency retries, replicas share a deploy cohort, backups lack a restore result, or a global average replaces the busiest tenant and slowest percentile.
 
-During review, ask for the counterexample that would break each decision. What happens if one tenant sends 30% of traffic, a reply disappears after commit, the consumer is down for two hours, or the newest release corrupts every replica? Record the answer, the signal that detects it, and the change that follows. If the candidate cannot name a measurable condition, score the choice as an assertion even when the named technology could work.
+Counterexamples expose unsupported decisions. One tenant might send 30% of traffic, a reply can disappear after commit, a consumer can remain down for two hours, or the newest release can corrupt every replica. A complete design records the resulting behavior, the signal that detects it, and the change that follows. A choice without a measurable condition remains an assertion even when the named technology could work.
 
-Revision should change the artifact, not merely the explanation. Add the missing cursor field, deduplication constraint, capacity line, failure-domain boundary, abort metric, or restore step. Then rerun the relevant trace and rescore only the dimension the new evidence affects. Keep both versions; the difference teaches more than a cleaned final diagram.
+A revision changes the artifact, not merely the explanation. It can add a missing cursor field, deduplication constraint, capacity line, failure-domain boundary, abort metric, or restore step, then rerun the relevant request or failure trace against that change.
 
 ## Running design: assemble the ledger
 
@@ -495,9 +484,9 @@ A strong system-design interview answer is a chain of testable decisions: scope 
 - **Trace a write across every boundary.** For an order API, follow DNS and the L4 or L7 load balancer, admission, idempotent API handling, relational transaction, WAL or binlog durability, outbox publication, CDC or broker delivery, and analytic projection. Name what happens when the reply, event, consumer, or replica fails.
 - **Keep OLTP and analytics contracts distinct.** Unique order identity and inventory reservation favor a relational transaction; a columnar ClickHouse projection can serve large scans after a defined lag. CDC should bootstrap from a consistent snapshot plus log position, and consumers must tolerate duplicate delivery.
 - **Let arithmetic challenge the diagram.** At 2,000 creates/s and 2,000 bytes each, raw writes are 4 MB/s before indexes, logs, replicas, and headroom. At 2 million 400-byte events/s, ingress is about 800 MB/s and seven raw days are about 483.84 TB.
-- **Practice a cross-module path.** In the document-processing case, clients upload about 5.72 TiB/day directly to object storage, notifications enter an idempotent queue path, ECS/EKS/Lambda choices follow runtime needs, and relational or key-value metadata publishes immutable output only after conditional completion.
-- **Use compact briefs to cover the other pressure points.** Social feed, multi-Region chat, search, notifications, tenant scheduling, and inference each retain clarification, requirements, arithmetic, API and state, two traces, alternatives, an invalidating requirement, and rubric evidence. The chat case makes writer fencing, RTO, RPO, reconnect state, and failover socket capacity explicit while leaving the recovery theory in SD10.
-- **Score observable evidence across six dimensions.** Evaluate framing, interfaces and correctness, scale and cost, failure and recovery, security and data policy, and operations plus observability. Fix the lowest score by adding a number, invariant, authorization rule, restore objective, cost unit, or abort signal; reject “add a cache” or “shard it” when identity, freshness, routing, and failure policy are missing.
+- **Follow a cross-module path.** In the document-processing case, clients upload about 5.72 TiB/day directly to object storage, notifications enter an idempotent queue path, ECS/EKS/Lambda choices follow runtime needs, and relational or key-value metadata publishes immutable output only after conditional completion.
+- **Compare worked designs across different pressure points.** Social feed, multi-Region chat, search, notifications, tenant scheduling, and inference each retain clarification, requirements, arithmetic, API and state, two traces, alternatives, and an invalidating requirement. The chat case makes writer fencing, RTO, RPO, reconnect state, and failover socket capacity explicit while leaving the recovery theory in SD10.
+- **Demand observable support for each choice.** Framing, correctness, scale, cost, recovery, security, data policy, and operations need a number, invariant, authorization rule, restore objective, cost unit, or abort signal. “Add a cache” and “shard it” remain incomplete when identity, freshness, routing, and failure policy are missing.
 
 ## References
 

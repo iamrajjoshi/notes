@@ -1,11 +1,9 @@
 ---
 title: Observing and debugging a Linux workload
-shortTitle: Linux debugging
 description: Turn a service symptom into a bounded Linux experiment using stable identity, counters, profiles, traces, pressure data, and crash evidence.
-collection: low-level-infrastructure
 slug: observability-and-debugging
 order: 7
-number: LL7
+identifier: LL7
 duration: 100 min
 difficulty: Core
 tags:
@@ -20,13 +18,7 @@ tags:
 
 An observation is a measurement made through one interface during one interval. It becomes evidence only after you can name the process instance, clock, scope, unit, and failure theory it tests.
 
-## Questions this note answers
-
-- Preserve process, boot, namespace, cgroup, executable, and time identity during an incident
-- Distinguish snapshots, counter deltas, sampled profiles, and event traces
-- Split on-CPU execution from runnable delay, blocking, cgroup throttling, and resource pressure
-- Choose among procfs, `strace`, `perf`, ftrace, and eBPF for a stated question
-- Collect a useful core dump without losing symbols or leaking its contents
+This note is the synthesis checkpoint for LL1–LL6. It combines process identity and descriptors from [LL1](01-kernel-boundary.md), scheduler and CPU evidence from [LL2](02-cpu-scheduling-and-locality.md), memory pressure from [LL3](03-virtual-memory.md), storage waits from [LL4](04-storage-and-io.md), network paths from [LL5](05-linux-networking-and-ebpf.md), and cgroup and namespace scope from [LL6](06-containers-and-cgroups.md). Return to the mechanism note when the first evidence split identifies a layer.
 
 ## Freeze identity before the subject changes
 
@@ -89,7 +81,7 @@ strace -ff -ttt -T -e trace=%file,%network -p PID -o /protected/path/trace
 
 `perf stat` counts selected software or hardware events during an interval. `perf record` samples execution and can build an on-CPU profile. Hardware events vary by processor, can be multiplexed when too many are requested, and may require privilege. Keep `perf list`, processor identity, kernel, event list, duration, and workload input beside the result.
 
-Call graphs also need unwind information and matching symbols. Frame pointers, DWARF data, JIT symbol maps, stripped binaries, and container mount views affect what the profile can name. An unresolved stack is a symbolization problem before it is an application conclusion.
+Call graphs also need unwind information and matching symbols. Native binaries may carry DWARF debugging data that describes functions, source locations, and unwind rules; a just-in-time (JIT) runtime instead needs symbol information for code it generated after the process started. Frame pointers, stripped binaries, and container mount views also affect what the profile can name. An unresolved stack is a symbolization problem before it is an application conclusion.
 
 Ftrace exposes static kernel events through tracefs. Tracepoint events are better version boundaries than attaching to an arbitrary internal function, though event names and fields can still change. Kprobes and many BPF tracing programs can attach to internal functions; those attachments need a kernel-specific compatibility check.
 

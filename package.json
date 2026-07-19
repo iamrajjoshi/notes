@@ -15,7 +15,7 @@
     "verify": "pnpm format:check && pnpm lint && pnpm check && pnpm test"
   },
   "devDependencies": {
-    "@iamrajjoshi/inkpath": "github:iamrajjoshi/inkpath#56fc260c9d5380315b4f18c572684c31849ed2a3",
+    "inkpath": "0.3.0",
     "oxfmt": "0.59.0",
     "oxlint": "1.74.0",
     "yaml": "2.9.0"

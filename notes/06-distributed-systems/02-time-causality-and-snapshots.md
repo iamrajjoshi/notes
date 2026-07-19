@@ -1,11 +1,9 @@
 ---
 title: Time, Causality, and Distributed Snapshots
-shortTitle: Time, causality, and snapshots
 description: Separate wall time from causal order, assign Lamport and vector timestamps, and capture a consistent global state without stopping every process at once.
-collection: distributed-systems
 slug: time-causality-and-snapshots
 order: 2
-number: DS2
+identifier: DS2
 duration: 3 hours
 difficulty: Core
 tags:
@@ -20,17 +18,6 @@ tags:
 ## Working model
 
 No process can directly observe a global present. Physical clocks estimate when events occurred, logical clocks record which events could have influenced others, and a distributed snapshot records one causally consistent cut through an execution.
-
-## Questions this note answers
-
-- Distinguish wall-clock time, monotonic elapsed time, clock offset, and frequency error
-- Explain what a Network Time Protocol (NTP) exchange can estimate and why path asymmetry leaves uncertainty
-- Decide whether two events have a happens-before relationship or are concurrent
-- Assign and compare Lamport timestamps without mistaking them for causal proof in both directions
-- Assign vector timestamps and identify concurrent updates
-- Recognize an inconsistent cut that contains a receive event without its send
-- Trace the Chandy-Lamport marker algorithm and account for messages in transit
-- State what a distributed snapshot can prove and what checkpoint recovery still needs
 
 ## Use different clocks for different questions
 

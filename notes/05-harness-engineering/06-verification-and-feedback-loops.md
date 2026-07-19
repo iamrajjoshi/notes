@@ -1,11 +1,9 @@
 ---
 title: Verification and feedback loops
-shortTitle: Verification loops
 description: Turn tool output into evidence, run the cheapest decisive checks first, and bound repair attempts when a candidate fails.
-collection: harness-engineering
 slug: verification-and-feedback-loops
 order: 6
-number: HE6
+identifier: HE6
 duration: 125 min
 difficulty: Core
 tags:
@@ -18,14 +16,6 @@ tags:
 ## Working model
 
 A tool result says what the tool reported. Verification compares independent evidence with the task contract. Feedback then changes the next action without weakening the original acceptance rule.
-
-## Questions this note answers
-
-- Distinguish action results, evidence, and acceptance decisions
-- Build a verification ladder from static checks to runtime observation
-- Design a bounded diagnose-repair-retest loop
-- Capture traces that explain both success and failure
-- Separate low-cardinality operations data from protected model and tool content
 
 ## Execution output is not the same as independent evidence
 
@@ -81,9 +71,9 @@ Repair logic must be bounded by attempts, elapsed time, tokens, cost, or a combi
 
 > **Toy repair loop.** Give the host separate rules for transcript validity, retryable transport faults, usage recording, and the step budget. Keeping them separate makes the trace say whether a turn was repaired, retried, observed, or stopped.
 
-### Code walk: classify four control paths
+### Worked design: classify four control paths
 
-Build four scripted cases around a toy model adapter:
+The comparison uses four scripted cases around a toy model adapter:
 
 | Trigger                                                           | Host action                                                                                    | Boundary                                                       |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
@@ -92,7 +82,17 @@ Build four scripted cases around a toy model adapter:
 | The next model call would exceed the run's step budget            | Store `budget_exhausted` and stop before the call                                              | Don't ask the model whether its own limit applies              |
 | The provider reports input and output token counts                | Record bounded usage fields on the call span                                                   | Don't let missing usage data change authorization or success   |
 
-For each row, write a positive test and a nearby negative test. [minimal-harness.mjs](examples/minimal-harness.mjs) already supplies two useful fixtures: `assembleModelStream` constructs one candidate from streamed events, and `LoopingModel` reaches a host-enforced step limit. Keep the repair and retry fixtures scripted so the exercise runs without a provider account.
+The transport-retry row below is a design trace, not an implemented fixture in the bundled example. The first scripted attempt emits the partial argument bytes `{"tenantId":"shop-99"` and then raises a retryable transport error before a terminal event. The host discards that incomplete candidate. A second attempt emits the complete object `{"tenantId":"shop-42"}` and a valid stop reason; only that second candidate reaches argument validation.
+
+The positive assertion binds the stored proposal to the second attempt, records one retry, and observes exactly one executor call for `shop-42`. The nearby negative assertion fails if any bytes from the first attempt survive into the stored message or if the executor runs before one complete candidate has been assembled. Concatenating both attempts would either create invalid JSON or preserve content from an abandoned generation; neither result may become a tool call.
+
+```text
+attempt 1: partial arguments for shop-99 -> connection_lost -> discarded
+attempt 2: complete arguments for shop-42 -> validated -> one executor call
+stored candidate: attempt 2 only
+```
+
+The other three rows use the same structure: name the accepted path, place a nearby case at the unsafe boundary, and assert both the terminal record and the absence of a forbidden effect. [minimal-harness.mjs](examples/minimal-harness.mjs) supplies two related fixtures: `assembleModelStream` constructs one candidate from streamed events, and `LoopingModel` reaches a host-enforced step limit. It does not implement the transcript-repair or cross-attempt transport-retry cases described here.
 
 ## Trace the operation without copying the whole payload
 
@@ -100,9 +100,9 @@ Start a run span at the task boundary, then connect model turns, tool calls, han
 
 OpenTelemetry now publishes separate GenAI semantic conventions for agent invocation and tool execution. The conventions include operations such as `invoke_agent` and `execute_tool`, plus model usage and latency attributes, but the GenAI surface remains under development. Pin the emitted schema version and test dashboards when upgrading instead of assuming an attribute name will stay fixed. OpenTelemetry also warns that system instructions, messages, tool arguments, and tool results may contain sensitive data; content capture should be off by default and enabled only through a reviewed policy.
 
-Framework tracing does not replace the system trace. For example, the OpenAI Agents software development kit (SDK) records model generations, tool calls, handoffs, guardrails, and custom events, while a durable workflow or sandbox may emit separate spans. Propagate one trace context across those boundaries, preserve the framework's version, and add the external receipt or candidate identity needed for verification. A pretty span tree with no artifact version still cannot prove success.
+Framework tracing does not replace the system trace. For example, the OpenAI Agents software development kit (SDK) records model generations, tool calls, handoffs, guardrails, and custom events, while a durable workflow or sandbox may emit separate spans. Its current tracing configuration includes model and function inputs and outputs by default unless `RunConfig.trace_include_sensitive_data` is disabled, so do not assume the OpenTelemetry content policy also controls the SDK. Propagate one trace context across those boundaries, preserve the framework's version, and add the external receipt or candidate identity needed for verification. A pretty span tree with no artifact version still cannot prove success.
 
-> **Cardinality check.** A metric label should come from a bounded catalog. Put run IDs, full paths, prompts, error bodies, and customer identifiers in protected trace or log records only when retention policy permits them.
+> **Metric cardinality.** A metric label should come from a bounded catalog. Put run IDs, full paths, prompts, error bodies, and customer identifiers in protected trace or log records only when retention policy permits them.
 
 ## Measure proof coverage and repair usefulness
 

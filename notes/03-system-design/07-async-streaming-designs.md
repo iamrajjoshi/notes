@@ -1,11 +1,9 @@
 ---
 title: Build Queues and Streams That Can Fall Behind
-shortTitle: Async and streaming
 description: Choose a work queue or durable log, define ordering and delivery semantics, and plan retries, dead letters, replay, and backpressure before consumers lag.
-collection: system-design
 slug: async-streaming-designs
 order: 7
-number: SD7
+identifier: SD7
 duration: 2.5 hours
 difficulty: Core
 tags:
@@ -25,21 +23,6 @@ tags:
 ## Working model
 
 Async transport converts request latency into stored debt. Queue depth and consumer lag are debt balances; arrival rate, service rate, and retry rate decide whether the balance clears or compounds.
-
-## Questions this note answers
-
-- Decide which result must complete in the request and which work may continue after durable acceptance
-- Choose a queue for work ownership or a log for retained ordered history
-- Trace a queued task through delivery ownership, acknowledgement, worker death, retry, dead-lettering, and redrive
-- Decide when a multi-step operation needs a persisted workflow rather than another queue message
-- Define Kafka's topic, record, partition, offset, broker, producer, consumer, and consumer-group terms
-- Trace one Kafka record from producer partitioning through broker replication, consumer processing, offset commit, and replay
-- State the scope of ordering rather than claiming global order
-- Design idempotent consumers for at-least-once delivery
-- Build a CDC path with a consistent snapshot, retained log position, schema policy, and measurable catch-up window
-- Use a transactional outbox when a database change and an emitted business event must agree
-- Calculate in-flight work and backlog drain time with Little's Law
-- Set retry, dead-letter, and replay policy without creating an infinite poison loop
 
 ## Decide what the caller must wait for
 
@@ -178,6 +161,8 @@ Separate the fact that happened from the command to perform work. An OrderPlaced
 
 ## Read committed changes from the database log
 
+[DB15: Change data capture](../07-data-systems/15-change-data-capture-and-projections.md) follows the snapshot, source position, schema, deletion, and rebuild protocols in full. This section keeps only what the interview design needs.
+
 Log-based change data capture reads the database's ordered recovery or replication stream after transactions commit and converts relevant changes into records for another system. PostgreSQL logical decoding extracts logical changes from WAL through a replication slot and output plugin. MySQL records changes in its binary log, which replication and CDC readers can consume. These streams represent database changes, not the user's business intent; an UPDATE from pending to paid needs domain meaning supplied by the schema or an outbox event.
 
 CDC avoids an application dual write in which the database commit succeeds but publishing fails, or publication succeeds before the database rolls back. It is still an asynchronous projection. Search, cache, analytics, and downstream services observe source changes after capture and delivery delay, so the product must define acceptable staleness and the behavior while the projection is rebuilding.
@@ -266,9 +251,9 @@ Queue depth counts work, while age of the oldest ready message tells how long a 
 
 Replay changes load and can repeat side effects, so treat it as a planned operation. Choose a source position and target consumer version, estimate replay rate, reserve capacity for live traffic, and monitor duplicates plus downstream throttles. Pause when live-event age crosses its limit. Afterward, compare source counts, accepted transitions, rejected duplicates, and dead letters. Exactly-once claims always have a boundary; name the broker, state store, and external side effects included before trusting the phrase.
 
-> **Backlog diagnosis.** A flat queue count can still hide churn when completions and retries replace each other at the same rate. Plot unique event completions beside total attempts.
+> **Backlog evidence.** A flat queue count can still hide churn when completions and retries replace each other at the same rate. Plot unique event completions beside total attempts.
 
-## Running design checkpoint
+## Continuing worked case: notification queue and backlog
 
 The outbox relay writes notification events to an at-least-once ordered work queue. The fixed stress case allows 5,000 new notification events each second. `event_id` remains the deduplication identity from database commit through provider receipt. `order_id` selects a FIFO message group or ordered partition, and the consumer admits only one active event for that key until it acknowledges or redrives the event. Routing by itself would not preserve order. A poison event therefore blocks later transitions for that order until the bounded retry and dead-letter policy releases the group. No requirement promises ordering across separate orders or recipients.
 

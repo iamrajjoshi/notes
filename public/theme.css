@@ -1,13 +1,15 @@
 :root {
   color-scheme: light;
   --background: #ffffff;
-  --ink: #171717;
-  --muted: #666666;
-  --faint: #707070;
-  --line: #e5e5e5;
-  --accent: #0f766e;
+  --ink: #171513;
+  --muted: #56534d;
+  --faint: #77736b;
+  --line: #e7e3dc;
+  --willow: #2dd4bf;
+  --accent: var(--willow);
   --accent-soft: #f0fdfa;
   --interactive: #0f766e;
+  --interactive-hover: #0b5f59;
   --inline-code: #f0fdfa;
   --block-code: #f6f6f6;
   --reading-width: 43.75rem;
@@ -27,6 +29,11 @@
   box-sizing: border-box;
 }
 
+::selection {
+  background: var(--willow);
+  color: var(--ink);
+}
+
 body {
   min-width: 20rem;
   margin: 0;
@@ -37,13 +44,15 @@ body {
 }
 
 a {
-  color: inherit;
-  text-decoration-color: var(--interactive);
+  color: var(--interactive);
+  text-decoration-color: currentColor;
   text-decoration-thickness: 0.13em;
   text-underline-offset: 0.12em;
 }
 
 a:hover {
+  color: var(--interactive-hover);
+  text-decoration-color: var(--willow);
   text-decoration-thickness: 0.18em;
 }
 
@@ -82,10 +91,16 @@ a:hover {
   display: inline-flex;
   min-width: 0;
   align-items: center;
+  color: var(--ink);
   gap: 0.7rem;
   font-size: 0.95rem;
   font-weight: 700;
   text-decoration: none;
+}
+
+.site-brand:hover,
+.site-brand:focus-visible {
+  color: var(--ink);
 }
 
 .site-brand:hover .site-title,
@@ -162,10 +177,32 @@ a:hover {
   list-style: none;
 }
 
+.page-meta > li {
+  display: inline-flex;
+  align-items: center;
+}
+
 .page-meta > li:not(:last-child)::after {
   margin: 0 0.45rem;
   color: var(--faint);
   content: "·";
+}
+
+.page-tags {
+  display: flex;
+  margin: 0.55rem 0 0;
+  padding: 0;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  list-style: none;
+}
+
+.page-tags li {
+  padding: 0.08rem 0.42rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .breadcrumbs ol {
@@ -264,6 +301,20 @@ a:hover {
   text-wrap: balance;
 }
 
+.heading-permalink {
+  margin-left: 0.4rem;
+  color: var(--interactive);
+  font-size: 0.72em;
+  font-weight: 500;
+  opacity: 0;
+  text-decoration: none;
+}
+
+.prose :is(h2, h3, h4, h5, h6):hover .heading-permalink,
+.heading-permalink:focus-visible {
+  opacity: 1;
+}
+
 .prose h2 {
   margin: 2.6rem 0 0.75rem;
   font-size: 1.25rem;
@@ -316,6 +367,21 @@ a:hover {
   font-weight: 750;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+details.annotation > summary.annotation__label {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+details.annotation[open] > summary.annotation__label {
+  margin-bottom: 0.55rem;
+}
+
+.math-display {
+  margin: 1.25rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .prose :not(pre) > code {
@@ -435,7 +501,6 @@ a:hover {
 
 .footnote-ref a,
 .footnote-backref {
-  color: var(--interactive);
   text-decoration: none;
 }
 
@@ -494,12 +559,13 @@ a:hover {
 
 .content-list__title-text {
   text-decoration-line: underline;
-  text-decoration-color: var(--interactive);
+  text-decoration-color: currentColor;
   text-decoration-thickness: 0.13em;
   text-underline-offset: 0.12em;
 }
 
 .content-list a:hover .content-list__title-text {
+  text-decoration-color: var(--willow);
   text-decoration-thickness: 0.18em;
 }
 
@@ -515,6 +581,40 @@ a:hover {
   color: var(--faint);
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+/* Keep the Notes surface minimal even if metadata settings change. */
+.page-meta > li:not(:has(.breadcrumbs)),
+.page-tags,
+.content-list__meta {
+  display: none;
+}
+
+.page-meta > li:has(.breadcrumbs)::after {
+  content: none;
+}
+
+.backlinks {
+  margin-top: 3rem;
+}
+
+.backlinks h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1rem;
+}
+
+.backlinks ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.backlinks li + li {
+  margin-top: 0.6rem;
+}
+
+.backlinks a {
+  font-weight: 650;
 }
 
 .page-footer {
@@ -550,9 +650,13 @@ a:hover {
   font-size: 0.9rem;
   font-weight: 650;
   text-decoration-line: underline;
-  text-decoration-color: var(--interactive);
+  text-decoration-color: currentColor;
   text-decoration-thickness: 0.13em;
   text-underline-offset: 0.12em;
+}
+
+.page-pagination a:hover strong {
+  text-decoration-color: var(--willow);
 }
 
 @media (max-width: 42rem) {
@@ -577,6 +681,12 @@ a:hover {
 @media (prefers-reduced-motion: reduce) {
   .site-title {
     transition: none;
+  }
+}
+
+@media (hover: none) {
+  .heading-permalink {
+    opacity: 1;
   }
 }
 

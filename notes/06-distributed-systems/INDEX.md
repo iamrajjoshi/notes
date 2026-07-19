@@ -14,6 +14,23 @@ Read the notes in order. The sequence begins with the system model and an ordina
 
 The primary lecture source is the University of Illinois CS 425 / ECE 428 Fall 2025 course. Historical systems such as Napster, Chord, MapReduce, Storm, and the original Dynamo remain useful because their mechanisms recur in current systems. Product-specific claims are checked against current project documentation before they are presented as current behavior.
 
+## Learning path
+
+| Note | Question answered                                                 | What it supplies to the next stage                                      |
+| ---- | ----------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| DS1  | What changes when a call crosses a process?                       | RPC uncertainty, operation identity, deadlines, and retry budgets       |
+| DS2  | How can events be ordered without one global present?             | Physical-time bounds, causality, logical clocks, and consistent cuts    |
+| DS3  | What can silence prove?                                           | Suspicion, membership, dissemination, and incarnation                   |
+| DS4  | How can a group deliver in order and keep stale holders out?      | Multicast order, election assumptions, leases, and fencing              |
+| DS5  | How can one durable authority survive crashes?                    | Consensus, replicated logs, state machines, and etcd                    |
+| DS6  | How are records placed, routed, and repaired?                     | Partitioning, distributed hash tables, and Cassandra as a concrete case |
+| DS7  | What may clients observe across copies and transactions?          | Consistency models, session rules, replication, and atomic commit       |
+| DS8  | How does computation move through a cluster?                      | Shuffle, stream state, checkpoints, placement, and resource policy      |
+| DS9  | What do local-looking shared abstractions hide?                   | Filesystem, memory, and edge failure contracts                          |
+| DS10 | How is the complete service protected, investigated, and rebuilt? | Security, incident analysis, and recovery                               |
+
+Difficulty labels describe the depth inside a note, not another reading order. Follow the note numbers; DS6 and DS8 apply mechanisms introduced in earlier Advanced notes.
+
 ## Source map
 
 | Supplied lecture material                                                                                                                                                                                                                                                                                    | Used principally in                              |
@@ -26,11 +43,11 @@ The primary lecture source is the University of Illinois CS 425 / ECE 428 Fall 2
 | [L12: time and ordering](https://courses.grainger.illinois.edu/cs425/fa2025/L12.FA25.pdf)                                                                                                                                                                                                                    | DS2 clocks, causality, and snapshots             |
 | [L16: multicast](https://courses.grainger.illinois.edu/cs425/fa2025/L16.FA25.pdf), [L17: leader election](https://courses.grainger.illinois.edu/cs425/fa2025/L17.FA25.pdf), and [L18: mutual exclusion](https://courses.grainger.illinois.edu/cs425/fa2025/L18.FA25.pdf)                                     | DS4 group communication and coordination         |
 | [L19-20: RPCs and concurrency control](https://courses.grainger.illinois.edu/cs425/fa2025/L19-20.FA25.pdf) and [L21: replication control](https://courses.grainger.illinois.edu/cs425/fa2025/L21.FA25.pdf)                                                                                                   | DS1 RPCs and DS7 transactions and replication    |
-| [L22: network structure](https://courses.grainger.illinois.edu/cs425/fa2025/L22.FA25.pdf), [L22B: stream processing](https://courses.grainger.illinois.edu/cs425/fa2025/L22.B.FA25.pdf), and [L23: scheduling](https://courses.grainger.illinois.edu/cs425/fa2025/L23.FA25.pdf)                              | DS8 dataflow and DS9 network shape               |
+| [L22: network structure](https://courses.grainger.illinois.edu/cs425/fa2025/L22.FA25.pdf), [L22B: stream processing](https://courses.grainger.illinois.edu/cs425/fa2025/L22.B.FA25.pdf), and [L23: scheduling](https://courses.grainger.illinois.edu/cs425/fa2025/L23.FA25.pdf)                              | DS8 network structure, dataflow, and scheduling  |
 | [L24A: distributed file systems](https://courses.grainger.illinois.edu/cs425/fa2025/L24.A.FA25.pdf), [L24B: consistency models](https://courses.grainger.illinois.edu/cs425/fa2025/L24.B.FA25.pdf), and [L25A: distributed shared memory](https://courses.grainger.illinois.edu/cs425/fa2025/L25.A.FA25.pdf) | DS7 consistency and DS9 shared data abstractions |
 | [L25B: sensor networks](https://courses.grainger.illinois.edu/cs425/fa2025/L25.B.FA25.pdf) and [L26: graph processing and machine learning](https://courses.grainger.illinois.edu/cs425/fa2025/L26.FA25.pdf)                                                                                                 | DS8 parallel computation and DS9 edge systems    |
 | [L27: security](https://courses.grainger.illinois.edu/cs425/fa2025/L27.FA25.pdf) and [L28: datacenter disasters](https://courses.grainger.illinois.edu/cs425/fa2025/L28.FA25.pdf)                                                                                                                            | DS10 security and incident analysis              |
-| [Final review](https://courses.grainger.illinois.edu/cs425/fa2025/Llast.FA25.pdf)                                                                                                                                                                                                                            | The complete dependency map and capstone         |
+| [Final review](https://courses.grainger.illinois.edu/cs425/fa2025/Llast.FA25.pdf)                                                                                                                                                                                                                            | The complete dependency map and worked case      |
 
 The supplied set jumps from L12 to L16. DS5 therefore uses the final review's consensus topic together with the original Paxos and Raft papers; it does not imply that the missing lecture decks were reviewed.
 

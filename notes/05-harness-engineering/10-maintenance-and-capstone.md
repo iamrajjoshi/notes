@@ -1,34 +1,21 @@
 ---
-title: Maintenance and measured capstone
-shortTitle: Maintenance capstone
+title: Maintenance and measured change
 description: Version the moving parts, improve one real task against a baseline, and operate the harness with before-and-after evidence and a rollback path.
-collection: harness-engineering
 slug: maintenance-and-capstone
 order: 10
-number: HE10
+identifier: HE10
 duration: 180 min
 difficulty: Advanced
 tags:
   - maintenance
   - versioning
   - rollout
-  - capstone
   - metrics
 ---
 
 ## Working model
 
 A harness is a changing service, not a finished prompt. Pin what ran, compare one controlled change with a baseline, release behind measurable gates, and keep the old path available until the new one earns trust.
-
-## Questions this note answers
-
-- Version models, instructions, tools, context policy, graders, and runtime together
-- Pin negotiated protocols, remote capability catalogs, and telemetry schemas that can change behavior
-- Use before-and-after measurements to attribute a harness change
-- Map a production run across durable state, replaceable workers, effect brokers, and operator control
-- Write rollout, rollback, ownership, and deprecation records
-- Change and test the public toy harness without weakening authority or proof
-- Extend the local toy harness with a resumable approval boundary
 
 ## Version the effective system, not only the prompt
 
@@ -76,7 +63,7 @@ Start with shadow or read-only runs when the task permits, then a small authoriz
 
 A maintenance record should name who owns the task suite, tool contracts, policy, environment image, and incident response. Review stale tools and permissions, rotate credentials, refresh cases from incidents, and retire instructions that no longer match the code. Every incident fix should leave behind a test, control, or explicit reason that prevents the finding from disappearing.
 
-> **Maintenance test.** If nobody can say which version is active, which cases guard it, and how to turn it off, the system is not ready for unattended effects.
+> **Operational readiness.** If nobody can say which version is active, which cases guard it, and how to turn it off, the system is not ready for unattended effects.
 
 ## Assemble the production topology before tuning a worker
 
@@ -140,44 +127,115 @@ Keep the old version disabled until its active leases end and its uncertain oper
 
 This topology doesn't require separate deployables for every row. A small installation can combine several responsibilities in one service, but it should retain separate state, identities, authorization checks, and evidence at the boundaries above.
 
-## Complete the public minimal-harness capstone
+## A public minimal harness ties the contracts together
 
-Use the dependency-free [minimal-harness.mjs](examples/minimal-harness.mjs) as the default capstone. It already supplies a normalized streaming model adapter, two tools, manual schema validation, tenant-scoped authorization, execution receipts, JSON checkpoints, a step budget, uncertain-effect reconciliation, and deterministic verification. No model key, external repository, or network call is needed.
+The dependency-free [minimal-harness.mjs](examples/minimal-harness.mjs) is the baseline for one measured change. It already supplies a normalized streaming model adapter, two tools, manual schema validation, tenant-scoped authorization, execution receipts, JSON checkpoints, a step budget, uncertain-effect reconciliation, and deterministic verification. No model key, external repository, or network call is needed.
 
-Run the unchanged baseline from the notes repository root:
+The unchanged baseline runs from the notes repository root:
 
 ```sh
 node notes/05-harness-engineering/examples/minimal-harness.mjs
 node --test tests/public-harness.test.mjs
 ```
 
-Read the output in causal order. `call-read` returns a payment error rate and an untrusted instruction. `call-bad` has valid argument types but fails authorization because it targets another tenant. `call-write` commits under a stable operation ID, loses its reply, and succeeds only after reconciliation finds the matching argument digest. The final text does not grant success; `verification.checks` does.
+Its output records the causal order. `call-read` returns a payment error rate and an untrusted instruction. `call-bad` has valid argument types but fails authorization because it targets another tenant. `call-write` commits under a stable operation ID, loses its reply, and succeeds only after reconciliation finds the matching argument digest. The final text does not grant success; `verification.checks` does.
 
-Make one behavior change: add optimistic version checking to the state-changing tool. Give each service an integer `version`, return it from `read_service`, require `expectedVersion` in the `set_maintenance` schema, and reject a write when the stored version has changed. A successful write increments the version. Keep the existing operation-ID deduplication, policy check, and uncertain-result path intact.
+The sections below are a hypothetical candidate design, not output from the unchanged baseline. They show the failure and success traces an implementation would need to produce while preserving tenant policy, stable operation identity, uncertain-result reconciliation, and deterministic verification.
 
-Write the failing case first. One scripted run should read version 1, observe a simulated concurrent update to version 2, and propose the stale write; the host must return a conflict receipt without changing maintenance state. A second case can use the current version and reach the same verified terminal state as the baseline. Do not solve the conflict by removing the precondition or widening the tenant policy.
+### Before: the write has no concurrency precondition
 
-Capstone evidence consists of the original passing result, the new failing eval before implementation, the bounded source and test diff, the final passing evals, and a short note explaining where validation ends and authorization or concurrency control begins. Those artifacts show the change; a polished model answer does not.
+The baseline `read_service` result contains current service fields, while `set_maintenance` requires only `tenantId`, `enabled`, and `operationId`. The operation ID prevents a retry from repeating the same logical effect, but it does not say whether the state observed before the proposal is still current. Another actor can change the service after the read and before the write.
 
-## Optional advanced capstone: add resumable approval
+### Expected failing trace: a stale decision still commits
 
-Create an isolated branch or worktree from the notes repository. Limit the change to `minimal-harness.mjs` and `tests/public-harness.test.mjs`. The invariant is simple: `set_maintenance` must not execute until the host receives an unexpired approval bound to the proposed call ID and arguments digest.
+In the hypothetical failing fixture, observable service state has an integer version but writes do not yet enforce it. The model reads `shop-42` at version 1. A scripted concurrent actor changes the same record to version 2. Because the old write contract carries no expected version, the proposed maintenance change still commits and advances the record to version 3.
 
-Write the failing cases first. Cover a missing decision, a changed digest, an expired decision, and an exact approval. Add one JSON round-trip case that pauses after the proposal, creates a fresh host instance from the saved checkpoint, applies the decision, and reaches the same verified state as the original demo. Keep the scripted model and in-memory store; the exercise needs no live service or credential.
+```text
+read_service -> { tenantId: "shop-42", maintenance: false, version: 1 }
+concurrent update -> { maintenance: false, version: 2 }
+set_maintenance without expectedVersion -> committed at version 3
 
-The capstone is complete when the baseline, failing cases, source boundary, passing result, and saved approval record agree. A passing test without a scoped diff is incomplete; so is a clean diff with no assertion that the executor stayed untouched before approval.
+oracle:
+  staleWriteRejected = false
+  maintenanceUnchanged = false
+  effectCount = 1
+result: rejected candidate
+```
 
-### Store intent before pausing
+The existing idempotency and tenant checks both pass in this trace. That is expected: they guard duplicate effects and authority, not stale observations. The failed oracle identifies the missing concurrency contract without weakening either existing control.
 
-Mark `set_maintenance` as approval-gated in its tool definition. After schema and tenant checks pass, store a pending record containing the call ID, tool name, arguments digest, preview, and expiry, then return a paused status. Don't call `executeTool` on that path. A resume decision must match the saved record before execution starts.
+### Change: bind a new operation to the observed version
+
+The candidate adds `version` to each service record and to `read_service`, then requires an integer `expectedVersion` in the `set_maintenance` schema. For a new operation ID, `setMaintenance` compares the stored and expected versions before mutation. A mismatch returns a structured conflict containing expected and actual versions and leaves the record unchanged. A match changes maintenance state and increments the version in the same store update.
+
+Operation replay is checked before the current-version comparison. If a prior call with the same operation ID and argument digest already committed, a retry returns its recorded result even though that successful write advanced the version. Reusing the operation ID with a different digest still fails. The digest now includes `expectedVersion`, so reconciliation can distinguish the exact stale or current proposal that produced an uncertain response.
+
+### Expected outcomes: conflict, success, and replay remain distinct
+
+| Case                                              | Receipt                                                                | Authoritative state                                    |
+| ------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------ |
+| Expected version 1, current version 2             | `conflict`, with `expectedVersion: 1` and `actualVersion: 2`           | Maintenance remains false at version 2; effect count 0 |
+| Expected version 2, current version 2             | First reply is lost; reconciliation returns `confirmed_applied`        | Maintenance becomes true at version 3; effect count 1  |
+| Same operation ID and same arguments after commit | Stored result returns with `replayed: true`                            | Version remains 3; effect count remains 1              |
+| Same operation ID with different expected version | `operation_id_conflict`; the recorded argument digest does not match   | Version remains 3; effect count remains 1              |
+| Correct version but wrong tenant                  | Tenant policy returns `denied` before the state-changing executor runs | The unrelated tenant remains unchanged                 |
+
+An implementation record would need the original baseline result, the stale-write failure above, a bounded source and test diff, conflict and successful-write receipts, the reconciled lost-response path, and final state-based verification. Validation establishes argument shape, authorization establishes tenant scope, optimistic concurrency protects the observed version, and operation identity protects retries; none substitutes for another.
+
+## Resumable approval adds a durable control boundary
+
+The next hypothetical change adds a human decision between an authorized proposal and execution. The bundled baseline does not implement this approval state. Its invariant is simple: `set_maintenance` must not execute until the host receives an unexpired approval bound to the proposed call ID and arguments digest.
+
+### Before: authorization permits immediate execution
+
+In the baseline, schema validation, tenant authorization, and the payment-error precondition lead directly to `executeTool`. Those checks prove that the call is well formed, in scope, and permitted by the standing task contract. They do not prove that a person reviewed this exact effect. In a hypothetical failure fixture, `set_maintenance` becomes approval-required, no decision is supplied, and the old host still calls the executor once. The candidate is rejected because `executorCalls` should remain zero while approval is unresolved.
+
+```text
+proposal call-write -> schema valid -> tenant allowed -> threshold true
+approval decision -> absent
+baseline executorCalls -> 1
+required executorCalls -> 0
+result: rejected candidate
+```
+
+### Change: store the reviewed intent before pausing
+
+The candidate marks `set_maintenance` as approval-gated in its tool definition. After schema and tenant checks pass, it stores a pending record containing the call ID, tool name, arguments digest, preview, and expiry, then returns a paused status without calling `executeTool`. A resume decision must match the saved record before execution starts.
 
 Keep approval state separate from the operation receipt. The approval permits a call; the operation record and `reconcileWrite` still prevent a repeated effect after a lost response.
 
-### Treat the checkpoint shape as versioned
+The pending approval becomes part of resumable state, so the candidate adds a checkpoint schema version. It rejects an unsupported version with a named terminal reason instead of guessing how to resume it. The round-trip evidence proves that approval survives serialization without carrying an executor function, credential, or mutable reference.
 
-The pending approval becomes part of resumable state, so give the checkpoint a schema version. Reject an unsupported version with a named terminal reason instead of guessing how to resume it. The round-trip test should prove that approval survives serialization without carrying an executor function, credential, or mutable reference.
+### Expected fail-closed outcomes
 
-Rerun the focused tests, inspect a diff limited to the two allowed files, and explain why approval, authorization, idempotency, and verification remain separate checks.
+The expected approval matrix uses the same pending call and resets the executor counter before each resume. A missing decision remains paused. An explicit denial becomes terminal `approval_denied`. A decision for a changed arguments digest becomes `approval_mismatch`, and a decision received after `expiresAt` becomes `approval_expired`. All four paths leave `executorCalls` at zero and store a distinct reason.
+
+| Resume input                   | Terminal or paused state | Executor calls | External effect |
+| ------------------------------ | ------------------------ | -------------: | --------------- |
+| No decision                    | `awaiting_approval`      |              0 | None            |
+| Explicit denial                | `approval_denied`        |              0 | None            |
+| Changed arguments digest       | `approval_mismatch`      |              0 | None            |
+| Matching decision after expiry | `approval_expired`       |              0 | None            |
+
+### Expected accepted trace: a fresh host resumes the exact approved call
+
+A correct accepted path would serialize a versioned checkpoint after the proposal, create a fresh host, load the checkpoint, and apply a decision that matches `call-write`, its arguments digest, and its expiry. The executor would run once. If its reply were lost after commit, the stable operation ID would still drive reconciliation; approval would not be requested again for the same recorded operation.
+
+```text
+checkpoint v4:
+  schemaVersion: 2
+  status: awaiting_approval
+  pending: { callId: call-write, argumentsDigest: d17, expiresAt: T+10m }
+
+fresh host -> load checkpoint v4
+decision -> { callId: call-write, argumentsDigest: d17, approved: true, decidedAt: T+2m }
+executorCalls -> 1
+write reply -> lost after commit
+reconciliation -> confirmed_applied for the same operation ID and digest
+verification -> accepted from authoritative state
+```
+
+In such an implementation, the saved approval record would prove which proposal a person allowed. Tenant authorization would still constrain who and what may change; optimistic version checking would still reject stale state; the operation record would still deduplicate or reconcile the write; and final verification would still read authoritative state. A verification record would need the pre-change failure, four fail-closed decisions, the checkpoint round trip, the single approved executor call, the reconciled receipt, and the final accepted state.
 
 ## Retire old paths only after work and evidence have drained
 
@@ -196,7 +254,7 @@ Maintain the harness as a versioned service whose behavior depends on more than 
 - Change one main variable and repeat enough trials to separate a real effect from run-to-run variance.
 - Define rollout owner, maximum exposure, promotion checks, stop conditions, and rollback action before traffic reaches the candidate.
 - Keep run state, queue delivery, worker leases, model calls, tool effects, sandbox artifacts, verification, and operator stop as explicit production boundaries.
-- For the public capstone, add version-checked writes while preserving tenant policy, operation deduplication, reconciliation, and deterministic verification.
+- In the worked design, version-checked writes preserve tenant policy, operation deduplication, reconciliation, and deterministic verification while rejecting stale observations.
 - Track active run versions and resumable checkpoints so an older workflow cannot wake into missing code.
 - Retire a path only after work has drained, audit records remain readable, and rollback no longer requires it.
 
@@ -208,5 +266,5 @@ Maintain the harness as a versioned service whose behavior depends on more than 
 - [OpenTelemetry GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai)
 - [OpenTelemetry: Traces](https://opentelemetry.io/docs/concepts/signals/traces/)
 - [DBOS: Workflow recovery](https://docs.dbos.dev/production/workflow-recovery)
-- [Minimal harness](examples/minimal-harness.mjs): Local capstone source with scripted models and deterministic tools.
+- [Minimal harness](examples/minimal-harness.mjs): Local baseline with scripted models and deterministic tools referenced by the worked designs.
 - [Durable harness](examples/durable-harness.mjs): Local recovery example for checkpoint versions, leases, and reconciliation.

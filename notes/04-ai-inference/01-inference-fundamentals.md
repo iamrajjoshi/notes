@@ -1,11 +1,9 @@
 ---
 title: Inference fundamentals
-shortTitle: Model basics
 description: Trace tensors through a model, then compare how generation, embedding, speech, vision, diffusion, and batch workloads change serving state and latency.
-collection: ai-inference
 slug: inference-fundamentals
 order: 1
-number: AI1
+identifier: AI1
 duration: 150 min
 difficulty: Foundation
 tags:
@@ -19,16 +17,6 @@ tags:
 ## Working model
 
 Inference means running an already-trained model to produce an answer. For a text model, the service turns text into numbered pieces called tokens, runs them through fixed learned numbers called weights, and chooses output tokens. Other models may consume images, audio frames, document pairs, or latent tensors instead. Most serving cost comes from moving and multiplying arrays and retaining the state required by active work.
-
-## Questions this note answers
-
-- Explain what a model server does for one text request
-- Calculate approximate weight memory from a model's learned numbers and numeric format
-- Trace text through numbered tokens, vectors, attention, and output selection
-- Separate training work and state from inference work and state
-- Explain why sequence length and generated tokens change serving cost
-- Compare the request, state, batching, latency, and overload mechanics of six inference workload classes
-- Recognize which later LLM-serving mechanisms generalize to other model families
 
 ## Scope: shared method, one deepest worked path
 
@@ -44,16 +32,16 @@ Training and inference solve different jobs. Training adjusts model weights by c
 
 ## Learn the vocabulary once
 
-| Term                     | Meaning in these notes                                                                                                                                                                 |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Model                    | A parameterized function that maps input numbers to output numbers. A language model assigns scores to possible next tokens.                                                           |
-| Parameter or weight      | A learned numeric value. A checkpoint stores weight tensors plus enough configuration to reconstruct the model.                                                                        |
-| Tensor                   | An array of numbers. A scalar has no axes, a vector has one, and a matrix has two; larger tensors add axes such as batch, token position, or attention head.                           |
-| Shape, dtype, device     | Shape gives the length of each tensor axis; dtype gives the numeric representation, such as BF16; device says where the storage and operations live, such as CPU or GPU.               |
-| Token and tokenizer      | A token is an ID from a fixed vocabulary. The tokenizer converts text to IDs and back; a token may be a word, part of a word, punctuation, whitespace, or bytes.                       |
-| Embedding and activation | An embedding maps a token ID to a vector. Activations are the temporary tensors produced while a request moves through the model.                                                      |
-| Layer and Transformer    | A layer is a repeated stage of computation. A Transformer combines attention with feed-forward computation and normalization; a decoder-only Transformer generates text left to right. |
-| Logit and decoding rule  | A logit is an unnormalized score for one vocabulary item. A decoding rule converts the scores into a chosen token, either deterministically or by sampling.                            |
+| Term                     | Meaning in these notes                                                                                                                                                                                |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model                    | A parameterized function that maps input numbers to output numbers. A language model assigns scores to possible next tokens.                                                                          |
+| Parameter or weight      | A learned numeric value. A checkpoint stores weight tensors plus enough configuration to reconstruct the model.                                                                                       |
+| Tensor                   | An array of numbers. A scalar has no axes, a vector has one, and a matrix has two; larger tensors add axes such as batch, token position, or attention head.                                          |
+| Shape, dtype, device     | Shape gives the length of each tensor axis; dtype gives the numeric representation, such as the 16-bit bfloat16 format (BF16); device says where the storage and operations live, such as CPU or GPU. |
+| Token and tokenizer      | A token is an ID from a fixed vocabulary. The tokenizer converts text to IDs and back; a token may be a word, part of a word, punctuation, whitespace, or bytes.                                      |
+| Embedding and activation | An embedding maps a token ID to a vector. Activations are the temporary tensors produced while a request moves through the model.                                                                     |
+| Layer and Transformer    | A layer is a repeated stage of computation. A Transformer combines attention with feed-forward computation and normalization; a decoder-only Transformer generates text left to right.                |
+| Logit and decoding rule  | A logit is an unnormalized score for one vocabulary item. A decoding rule converts the scores into a chosen token, either deterministically or by sampling.                                           |
 
 An LLM is a language model with a large number of parameters. “Large” has no precise engineering threshold, so capacity plans should name the architecture, parameter count, tensor shapes, and formats instead of relying on the label.
 
@@ -130,7 +118,7 @@ Attention needs some representation of order; otherwise the same tokens in a dif
 
 The position scheme is part of context compatibility. A checkpoint was trained with particular position behavior, and runtimes may expose scaling or other long-context options. Raising a configured context limit does not prove that output quality, memory use, or kernels remain acceptable at the new length; validate the exact model and setting.
 
-Position is also part of prefix-cache identity. Reusing cached keys and values requires the same model-relevant prefix: token IDs, model and adapter revision, attention configuration, RoPE or other position parameters, and the position IDs assigned to those tokens. Keys computed with one RoPE scaling rule or starting position are not interchangeable with keys computed under another. A cache key that includes only the prompt text can therefore return numerically incompatible state even when the text looks identical.
+A **prefix cache** retains KV state for a previously processed prefix so a compatible later request can reuse that work. Its identity must include the same model-relevant prefix: token IDs, model and adapter revision, attention configuration, RoPE or other position parameters, and the position IDs assigned to those tokens. Keys computed with one RoPE scaling rule or starting position are not interchangeable with keys computed under another. A cache key that includes only the prompt text can therefore return numerically incompatible state even when the text looks identical. [Single-node optimization](05-single-node-optimization.md#pagedattention-makes-sequence-memory-non-contiguous) returns to allocation, sharing, and tenant boundaries.
 
 ## Inference reuses weights but still grows state
 

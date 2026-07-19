@@ -1,11 +1,9 @@
 ---
 title: EKS and ECS without false equivalence
-shortTitle: EKS and ECS
 description: Compare the two AWS container control planes by API, ownership, compute, extension points, and operating cost.
-collection: cloud-infrastructure
 slug: eks-and-ecs
 order: 6
-number: CI6
+identifier: CI6
 duration: 130 min
 difficulty: Core
 tags:
@@ -20,15 +18,6 @@ tags:
 ## Working model
 
 A managed service removes ownership of named components, not responsibility for the resulting system. Compare EKS and ECS by the contracts you operate, not by a one-line feature table.
-
-## Questions this note answers
-
-- Draw the responsibility boundary for an EKS cluster
-- Trace task definition → ECS task → ECS service → capacity provider → target group
-- Compare an ECS task and service with a Kubernetes Pod and controller without equating them
-- Choose EC2, Fargate, EKS Auto Mode, ECS Managed Instances, managed node groups, or dynamic nodes for stated constraints
-- Plan control-plane, add-on, node, and workload upgrades separately
-- Inventory cluster add-ons by version, owner, watched objects, permissions, and health evidence
 
 ## Start with the two products
 
@@ -51,7 +40,17 @@ ECR image → ECS task definition → ECS service → tasks → load-balancer ta
 ECR image → EKS Deployment → ReplicaSet → Pods → Kubernetes Service → load balancer
 ```
 
-## EKS manages Kubernetes control-plane availability
+## ECS starts from a task definition
+
+An ECS task definition is a revisioned JSON blueprint: container images and commands, CPU and memory, ports, volumes, logs, health checks, a task execution role for ECS operations, and a task role for application AWS calls. A task is one running instantiation of that definition. A long-running ECS service maintains a desired number of tasks, replaces stopped or unhealthy tasks, and can register them with an ALB, NLB, or GWLB target group. A standalone task runs once without a service maintaining it.
+
+Capacity providers answer where tasks run. Fargate and Fargate Spot provide serverless task capacity. An Auto Scaling group capacity provider uses EC2 instances that your team configures. ECS Managed Instances supplies AWS-managed EC2 capacity while retaining ECS task scheduling; it sits between Fargate's per-task boundary and self-managed EC2 fleets. Current AWS guidance prefers capacity-provider strategies over choosing a launch type at service run time.
+
+For east-west traffic, an ECS service can use ordinary load balancing, Cloud Map service discovery, VPC Lattice, or Service Connect. Service Connect adds a managed proxy to each participating task plus short names, discovery, metrics, and logs. It doesn't expose the service to external clients.
+
+## EKS starts from Kubernetes objects
+
+An EKS workload starts with the Kubernetes objects introduced in CI2. A Deployment declares the desired Pod replicas, the scheduler selects worker nodes, kubelets start the image, and a Kubernetes Service gives the replaceable Pods a stable destination. AWS operates the Kubernetes control-plane availability; the application team still declares and operates the workload objects.
 
 AWS gives each EKS cluster its own Kubernetes control plane, with at least two API server instances and three etcd instances distributed across three Availability Zones. Your team still owns cluster access, workload configuration, network design, add-ons, node or Fargate choices, version upgrades, observability, policy, and cost. Managed doesn't mean unattended.
 
@@ -85,14 +84,6 @@ The EKS API can remain healthy while no worker can launch. A managed node group 
 Do not install Cluster Autoscaler and Karpenter with overlapping ownership of the same node supply. If both exist in one cluster, draw which node groups or NodePools each controller may change, how scale-down ownership differs, and which controller an operator should inspect for a given Pending Pod.
 
 _The managed control plane, recovery floor, and elastic node controller have separate lifecycles._
-
-## ECS starts from a task definition
-
-An ECS task definition is a revisioned JSON blueprint: container images and commands, CPU and memory, ports, volumes, logs, health checks, a task execution role for ECS operations, and a task role for application AWS calls. A task is one running instantiation of that definition. A long-running ECS service maintains a desired number of tasks, replaces stopped or unhealthy tasks, and can register them with an ALB, NLB, or GWLB target group. A standalone task runs once without a service maintaining it.
-
-Capacity providers answer where tasks run. Fargate and Fargate Spot provide serverless task capacity. An Auto Scaling group capacity provider uses EC2 instances that your team configures. ECS Managed Instances supplies AWS-managed EC2 capacity while retaining ECS task scheduling; it sits between Fargate's per-task boundary and self-managed EC2 fleets. Current AWS guidance prefers capacity-provider strategies over choosing a launch type at service run time.
-
-For east-west traffic, an ECS service can use ordinary load balancing, Cloud Map service discovery, VPC Lattice, or Service Connect. Service Connect adds a managed proxy to each participating task plus short names, discovery, metrics, and logs. It doesn't expose the service to external clients.
 
 ## EKS exposes Kubernetes, not ECS objects
 
@@ -155,9 +146,9 @@ at each gate: observe, compare, continue or stop
 
 EKS and ECS remove different parts of container-platform ownership. The useful comparison is the API and operating surface your team retains, including capacity, networking, policy, upgrades, add-ons, and recovery.
 
+- An ECS task definition is a blueprint, a task is one running copy, and a service maintains desired tasks. A capacity provider chooses Fargate, managed instances, or Auto Scaling group capacity.
 - AWS operates EKS control-plane availability; the platform team still owns access, workloads, nodes or Fargate, add-ons, network design, observability, policy, upgrades, and cost.
 - A self-managed cluster must bootstrap and operate API servers, etcd, controllers, schedulers, certificates, and a secure highly available endpoint. kubeadm assists bootstrap and upgrades but does not provision or continuously operate that whole system.
-- An ECS task definition is a blueprint, a task is one running copy, and a service maintains desired tasks. A capacity provider chooses Fargate, managed instances, or Auto Scaling group capacity.
 - EKS exposes Kubernetes resources, admission, CRDs, and controllers. Similar-looking ECS tasks and Kubernetes Pods do not share the same rollout, identity, network, or extension contracts.
 - Separate cluster creation, baseline node capacity, and dynamic capacity controllers. Cluster Autoscaler and Karpenter run after the cluster exists and make supply decisions from Kubernetes and provider state.
 - Fargate removes host administration for each supported task or Pod. EKS Auto Mode manages a broader EC2-backed data plane. Standard EC2 nodes retain host control and add image, kernel, drain, patch, and replacement work.

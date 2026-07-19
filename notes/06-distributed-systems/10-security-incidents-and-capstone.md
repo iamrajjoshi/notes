@@ -1,11 +1,9 @@
 ---
-title: Security, Failure Cascades, and the Design Capstone
-shortTitle: Security and incidents
+title: Security, Failure Cascades, and a Worked Design
 description: Protect identities, messages, state, and recovery paths, then use real datacenter failures to test whether a distributed design can contain damage and return to service.
-collection: distributed-systems
 slug: security-incidents-and-capstone
 order: 10
-number: DS10
+identifier: DS10
 duration: 4 hours
 difficulty: Advanced
 tags:
@@ -14,23 +12,12 @@ tags:
   - IAM
   - incident-response
   - disaster-recovery
-  - capstone
+  - worked-case
 ---
 
 ## Working model
 
 Security and reliability both ask which actions and states remain possible when assumptions fail. Define the actor, authority, protected state, dependency, failure boundary, and recovery evidence before choosing encryption, an identity and access management (IAM) policy, replica count, or failover automation.
-
-## Questions this note answers
-
-- Write a threat model with assets, trust boundaries, attacker capabilities, and security objectives
-- Distinguish confidentiality, integrity, availability, authentication, authorization, and audit
-- Explain AEAD, TLS 1.3, signatures, certificate chains, and envelope encryption without inventing a cryptographic protocol
-- Trace a cloud request through workload identity and IAM policy evaluation
-- Follow the 2011 and 2025 AWS incidents as dependency and recovery-load cascades
-- Separate replication, backup, failover, RPO, RTO, and restoration
-- Write an incident timeline, postmortem, and game-day test that produces useful evidence
-- Review a system design through state, ordering, failure, security, operations, and cost
 
 ## Start with an attacker model, not an algorithm name
 
@@ -171,7 +158,7 @@ An incident record should preserve impact, detection, a fact-based timeline, dec
 
 Security incident response and reliability response overlap. Preserve evidence and access logs, control credentials, contain damage, restore service, and avoid destroying forensic material during cleanup. NIST SP 800-61 Revision 3 treats preparation and learning as part of ongoing risk management, not a binder opened only after compromise.
 
-## Capstone: design an order-ingestion service
+## Worked case: design an order-ingestion service
 
 Assume a company needs an API that accepts orders, returns an order ID within 300 ms at the p99, handles 2,000 requests per second at peak, never acknowledges the same client operation as two orders, and keeps acknowledged-order RPO at zero for an Availability Zone failure. Regional recovery has a 30-minute RTO and a five-minute RPO. Analytics may lag by fifteen minutes.
 
@@ -185,14 +172,16 @@ Observe request success and latency, database commit and replica lag, deduplicat
 
 ## Use one checklist for any distributed design
 
-1. **Purpose and load:** What user action succeeds, at what rate, payload, latency, and availability target?
-2. **State and authority:** Which state exists, who may change it, and which data is derived?
-3. **Placement and flow:** Where are partitions and replicas, and which bytes cross each network edge?
-4. **Ordering and invariants:** Which concurrent outcomes are forbidden, and what mechanism rejects them?
-5. **Failure model:** What can pause, crash, partition, lie, fill, expire, or lose durable state?
-6. **Recovery:** What is retried, replayed, rebuilt, failed over, fenced, or restored, and how much load does that create?
-7. **Security:** Which principal performs each action, how is it authenticated, what policy authorizes it, and where are keys and audit records?
-8. **Operations and cost:** Which signals prove health, how are changes rolled back, what game days run, and which CPU, memory, storage, network, accelerator, or energy bill dominates?
+| Design record           | Required contents                                                                                                                             |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Purpose and load        | Successful user action, request or event rate, payload, latency target, and availability target                                               |
+| State and authority     | Authoritative and derived state, allowed writers, transaction boundary, and state owner                                                       |
+| Placement and flow      | Partitions, replicas, failure domains, routing decision, and bytes crossing each network edge                                                 |
+| Ordering and invariants | Forbidden concurrent outcomes, ordering scope, conflict rule, and mechanism that rejects an invalid transition                                |
+| Failure model           | Processes and dependencies that may pause, crash, partition, lie, fill, expire, or lose durable state                                         |
+| Recovery                | Retry, replay, rebuild, failover, fencing, and restore actions, including the load each action creates                                        |
+| Security                | Principal for each action, authentication method, authorization policy, secret and key boundary, and audit record                             |
+| Operations and cost     | Health and contract signals, rollback rule, failure rehearsal, and the dominant CPU, memory, storage, network, accelerator, or energy expense |
 
 Do not maximize every design goal. Full resource utilization removes recovery headroom. Cross-region synchronous coordination can improve one data-loss objective while increasing latency and reducing write availability during a partition. Transparency can simplify normal use while hiding stale caches or partial failure that the application should handle. A sound design states those trades in the contract.
 

@@ -8,9 +8,9 @@ importers:
 
   .:
     devDependencies:
-      '@iamrajjoshi/inkpath':
-        specifier: github:iamrajjoshi/inkpath#56fc260c9d5380315b4f18c572684c31849ed2a3
-        version: git+https://git@github.com:iamrajjoshi/inkpath.git#56fc260c9d5380315b4f18c572684c31849ed2a3
+      inkpath:
+        specifier: 0.3.0
+        version: 0.3.0
       oxfmt:
         specifier: 0.59.0
         version: 0.59.0
@@ -187,12 +187,6 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
-
-  '@iamrajjoshi/inkpath@git+https://git@github.com:iamrajjoshi/inkpath.git#56fc260c9d5380315b4f18c572684c31849ed2a3':
-    resolution: {commit: 56fc260c9d5380315b4f18c572684c31849ed2a3, repo: git@github.com:iamrajjoshi/inkpath.git, type: git}
-    version: 0.1.0
-    engines: {node: '>=22.13.0'}
-    hasBin: true
 
   '@iconify/types@2.0.0':
     resolution: {integrity: sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg==}
@@ -745,6 +739,11 @@ packages:
   import-meta-resolve@4.2.0:
     resolution: {integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==}
 
+  inkpath@0.3.0:
+    resolution: {integrity: sha512-JMFRX0HgBmekd8k2+Rfjl3TVb9D6L6Pt+c10SOPvowP6Y7nQHH4IAzrqKMYjECCzLoJ2ewkkz1V/LVpRjD/O0w==}
+    engines: {node: '>=22.13.0'}
+    hasBin: true
+
   internmap@1.0.1:
     resolution: {integrity: sha512-lDB5YccMydFBtasVtxnZ3MRBHuaoE8GKsppq+EchKL2U4nK/DmEpPHNH8MZe5HkMtpSiTSOZwfN0tzYjO/lJEw==}
 
@@ -754,6 +753,10 @@ packages:
 
   katex@0.16.47:
     resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
+    hasBin: true
+
+  katex@0.18.0:
+    resolution: {integrity: sha512-rZ4Sw94Oja12Ib4+ee7inAr//yxj0G8RaAlh+ZpzfFhwTifGeJbqJ7D0FStcv6EV8DeNNU9Y8rPeg6vPUizlqg==}
     hasBin: true
 
   khroma@2.1.0:
@@ -962,16 +965,6 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.1':
     optional: true
-
-  '@iamrajjoshi/inkpath@git+https://git@github.com:iamrajjoshi/inkpath.git#56fc260c9d5380315b4f18c572684c31849ed2a3':
-    dependencies:
-      chokidar: 5.0.0
-      esbuild: 0.28.1
-      highlight.js: 11.11.1
-      markdown-it: 14.3.0
-      markdown-it-footnote: 4.0.0
-      mermaid: 11.16.0
-      yaml: 2.9.0
 
   '@iconify/types@2.0.0': {}
 
@@ -1481,11 +1474,26 @@ snapshots:
 
   import-meta-resolve@4.2.0: {}
 
+  inkpath@0.3.0:
+    dependencies:
+      chokidar: 5.0.0
+      esbuild: 0.28.1
+      highlight.js: 11.11.1
+      katex: 0.18.0
+      markdown-it: 14.3.0
+      markdown-it-footnote: 4.0.0
+      mermaid: 11.16.0
+      yaml: 2.9.0
+
   internmap@1.0.1: {}
 
   internmap@2.0.3: {}
 
   katex@0.16.47:
+    dependencies:
+      commander: 8.3.0
+
+  katex@0.18.0:
     dependencies:
       commander: 8.3.0
 

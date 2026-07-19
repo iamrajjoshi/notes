@@ -1,11 +1,9 @@
 ---
 title: The inference request lifecycle
-shortTitle: Request lifecycle
 description: Break one streamed completion into admission, tokenization, prefill, decode, KV-cache growth, and delivery to the client.
-collection: ai-inference
 slug: serving-lifecycle
 order: 2
-number: AI2
+identifier: AI2
 duration: 120 min
 difficulty: Core
 tags:
@@ -18,14 +16,6 @@ tags:
 ## Working model
 
 A text-generation request does not go straight from HTTP to a GPU. CPU-side code validates and tokenizes it, a scheduler waits for safe capacity, the GPU processes the prompt and generates tokens, and the delivery path streams them while every stage tracks cancellation and memory ownership.
-
-## Questions this note answers
-
-- Trace a request from admission through its last streamed token
-- Explain why prefill and decode stress hardware differently
-- Calculate standard multi-head or grouped-query KV-cache storage
-- Place queueing, cancellation, and backpressure at concrete lifecycle boundaries
-- Connect time to first token (TTFT) and inter-token latency to distinct phases
 
 ## Trace the whole path before studying a phase
 
@@ -54,7 +44,7 @@ Admission should know the model, prompt length, requested output bound, priority
 
 Prefill runs the prompt through the model and produces the first set of key/value tensors. Matrix dimensions grow with the number of prompt tokens, giving the GPU more parallel work; long prompts can dominate compute and delay short requests when the scheduler admits them carelessly.
 
-Time to first token includes queueing, tokenization, prefill, sampling, and delivery. A high TTFT does not identify which of those components caused it, so trace the phase boundaries.
+Time to first token (TTFT) includes queueing, tokenization, prefill, sampling, and delivery. A high TTFT does not identify which of those components caused it, so trace the phase boundaries.
 
 ## Decode trades wide parallel work for repeated memory reads
 
@@ -66,7 +56,7 @@ Streaming returns tokens as they become available, but the server still needs bo
 
 ## KV cache grows with the sum of cached tokens
 
-Multi-head attention normally gives every query head its own key and value head. Multi-query attention uses one key/value head for all query heads, while grouped-query attention uses an intermediate number. Fewer KV heads reduce cache storage and KV bandwidth; they do not reduce the number of query heads in the same proportion.
+Multi-head attention (MHA) normally gives every query head its own key and value head. Multi-query attention uses one key/value head for all query heads, while grouped-query attention (GQA) uses an intermediate number. Fewer KV heads reduce cache storage and KV bandwidth; they do not reduce the number of query heads in the same proportion.
 
 First calculate bytes per cached token, then multiply by the sum of cached token counts across active sequences. Do not multiply by batch size again if the token count already includes the full batch.
 

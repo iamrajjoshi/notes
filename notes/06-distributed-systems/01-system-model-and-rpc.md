@@ -1,11 +1,9 @@
 ---
 title: The Distributed System Model and One Remote Call
-shortTitle: System model and RPC
 description: Trace one request across independent processes, define the timing and failure model, and make ambiguous RPC outcomes safe to retry.
-collection: distributed-systems
 slug: system-model-and-rpc
 order: 1
-number: DS1
+identifier: DS1
 duration: 2.5 hours
 difficulty: Beginner
 tags:
@@ -20,17 +18,6 @@ tags:
 ## Working model
 
 A distributed call is a message exchange between independent processes. The familiar function-call syntax ends at the process boundary; delay, duplication, uncertainty, and partial failure begin there.
-
-## Questions this note answers
-
-- Define a distributed system without relying on the word "cloud"
-- State which timing, network, and failure assumptions an algorithm needs
-- Follow one RPC through serialization, transport, queuing, execution, and reply
-- Explain why a timeout does not reveal whether the server changed state
-- Distinguish maybe, at-least-once, at-most-once, and application-level effectively-once behavior
-- Make a state-changing request safe with a stable operation ID and stored result
-- Set deadlines, retry budgets, backoff, jitter, and cancellation as one policy
-- Trace an uncertain call using evidence from both client and server
 
 ## Begin with one call across one boundary
 

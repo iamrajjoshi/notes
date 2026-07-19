@@ -1,11 +1,9 @@
 ---
 title: Firecracker, Cloud Hypervisor, and Kata
-shortTitle: MicroVMs
 description: Compare a general virtual machine, a reduced cloud VMM, and a container runtime backed by a guest kernel.
-collection: low-level-infrastructure
 slug: microvms-and-kata
 order: 9
-number: LL9
+identifier: LL9
 duration: 95 min
 difficulty: Advanced
 tags:
@@ -19,13 +17,14 @@ tags:
 
 MicroVMs remove machine surface rather than removing the VM boundary. Kata then wraps that boundary in container-runtime plumbing so an orchestrator can request a Pod while a guest kernel supplies the stronger isolation layer.
 
-## Questions this note answers
+The products in the title play different roles. LL8 supplied the general KVM and QEMU model; this note follows Firecracker's reduced machine surface in detail, uses Cloud Hypervisor as a second reduced-VMM comparison, and then follows Kata's runtime integration around a selected VMM.
 
-- Explain which device and workload choices make a VM a microVM in practice
-- Trace Firecracker's process, API, vCPU, virtio, jailer, and seccomp boundaries
-- Describe Cloud Hypervisor's cloud-workload scope
-- Explain how Kata presents an OCI container while running its workload inside a VM
-- Separate memory snapshot state from disk state and external network state
+| System           | Boundary emphasized in this note                                                                 | Main question to verify                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| QEMU with KVM    | Broad machine construction and device-model support around hardware-assisted guest execution     | Which machine type, firmware, devices, accelerators, migration path, and operational tools does the guest require?       |
+| Firecracker      | One microVM per process with a deliberately small virtio device model and a separate jailer      | Do the supported boot and device assumptions fit, and can the launcher reconstruct host networking and storage safely?   |
+| Cloud Hypervisor | A smaller cloud-oriented VMM with a virtio-focused device model and a different feature boundary | Does the chosen release support the required guest, architecture, hotplug, snapshot, migration, and device combination?  |
+| Kata Containers  | Container-runtime and guest-agent plumbing around a lightweight VM                               | Which VMM backs the sandbox, and how do host, shim, guest agent, storage, networking, and cgroups divide responsibility? |
 
 ## Firecracker narrows the device model
 

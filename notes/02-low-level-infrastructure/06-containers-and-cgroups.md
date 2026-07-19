@@ -1,11 +1,9 @@
 ---
 title: Containers and cgroups
-shortTitle: Containers
 description: Assemble a Linux container from namespaces, cgroups, filesystems, credentials, and an OCI runtime contract.
-collection: low-level-infrastructure
 slug: containers-and-cgroups
 order: 6
-number: LL6
+identifier: LL6
 duration: 145 min
 difficulty: Core
 tags:
@@ -18,15 +16,6 @@ tags:
 ## Working model
 
 A container is a normal host process with a prepared view and a resource contract. Namespaces change what it can identify, cgroups account and control consumption, and security policy narrows what its credentials may do.
-
-## Questions this note answers
-
-- Explain what namespaces isolate and what remains shared
-- Read a cgroup v2 hierarchy and connect controller files to resource behavior
-- Contrast cgroup v1's separate controller trees with v2's unified hierarchy
-- Audit a v1-to-v2 migration and delegate a subtree without fighting systemd
-- Trace Kubernetes requests and limits to scheduling decisions and cgroup controls
-- Describe the OCI runtime, root filesystem, capabilities, seccomp, and LSM roles
 
 ## Start with an image and end with a host process
 

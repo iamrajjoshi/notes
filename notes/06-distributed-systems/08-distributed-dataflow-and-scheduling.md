@@ -1,11 +1,9 @@
 ---
 title: Distributed Dataflow and Scheduling
-shortTitle: Dataflow and scheduling
 description: Follow bounded and unbounded data through partitions, shuffles, stateful operators, checkpoints, graph supersteps, and distributed training while accounting for placement and shared cluster resources.
-collection: distributed-systems
 slug: distributed-dataflow-and-scheduling
 order: 8
-number: DS8
+identifier: DS8
 duration: 3.5 hours
 difficulty: Intermediate
 tags:
@@ -20,18 +18,6 @@ tags:
 ## Working model
 
 A distributed computation is a graph of operators joined by data movement. Correctness depends on what each operator reads, what state it keeps, when progress becomes final, and what recovery replays; speed depends on partition balance, network transfers, storage, and the slowest required participant.
-
-## Questions this note answers
-
-- Distinguish bounded batch input from an unbounded event stream
-- Trace one MapReduce word count through input splits, maps, shuffle, reducers, and durable output
-- Explain what YARN schedules and how Kubernetes places a Pod today
-- Compare FIFO, shortest-job policies, queue shares, and dominant-resource fairness without claiming one scheduler is universally optimal
-- Read a streaming topology using sources, operators, partitions, state, sinks, event time, and watermarks
-- Follow a Kafka-backed Flink job through keyed state, windows, checkpoint barriers, failure, replay, and sink commit
-- Explain backpressure, checkpoint recovery, replay, and the boundary of an exactly-once claim
-- Use graph structure to predict skew, path length, and failure sensitivity
-- Follow one Pregel superstep and one synchronous data-parallel training step
 
 ## Start with bounded input and an explicit output
 
@@ -59,6 +45,8 @@ input splits -> map tasks -> partition and sort -> network shuffle -> reduce tas
 ```
 
 Map output normally stays on a worker's local disk because the runtime can rerun the mapper if that worker fails. Final output goes to a distributed filesystem because later jobs need it after the worker disappears. Reducers can begin fetching completed map outputs before every mapper finishes, but the reduce function cannot finish its complete key groups until the map side reaches its barrier.
+
+A distributed filesystem keeps a namespace and file contents across independently failing storage processes. The Hadoop Distributed File System (HDFS) separates a NameNode metadata authority from DataNodes that hold replicated or erasure-coded blocks; MapReduce can place map tasks near those blocks. [DS9](./09-filesystems-shared-memory-and-edge.md#gfs-and-hdfs-split-metadata-from-bulk-data) follows namespace lookup, the HDFS write pipeline, acknowledgment boundaries, and repair. Here, the required contract is narrower: completed reducer output survives the task process and later jobs can locate it.
 
 A **combiner** may aggregate repeated map output locally, such as turning one hundred `(everyone, 1)` records into `(everyone, 100)` before the shuffle. That optimization is safe only when its operation has the required algebraic properties and its output type fits the reducer input. The runtime may run a combiner zero, one, or several times, so application correctness cannot depend on it.
 
@@ -95,11 +83,11 @@ That example explains the fairness rule, not every production objective. Fragmen
 
 ## Treat Storm as a historical stream-processing model
 
-The course uses Apache Storm to introduce long-running dataflow. A **spout** is a source, a **bolt** consumes and emits tuples, and a **topology** connects them. Parallel tasks execute one logical bolt. Shuffle grouping distributes records among tasks; fields grouping hashes selected field values so equal values reach the same task; all grouping broadcasts every tuple. The lecture's alphabet-range fields example communicates partition affinity, but Storm fields grouping uses hashing rather than fixed letter ranges.
+The supplied lecture uses Apache Storm to introduce long-running dataflow. A **spout** is a source, a **bolt** consumes and emits tuples, and a **topology** connects them. Parallel tasks execute one logical bolt. Shuffle grouping distributes records among tasks; fields grouping hashes selected field values so equal values reach the same task; all grouping broadcasts every tuple. The lecture's alphabet-range fields example communicates partition affinity, but Storm fields grouping uses hashing rather than fixed letter ranges.
 
 Storm tracks a tuple tree rooted at a source tuple. Bolts anchor descendants and acknowledge or fail work; the source can replay a root when its tree does not complete before the timeout. This is an at-least-once mechanism unless the application adds a narrower transactional boundary. A replay can repeat a database write or notification.
 
-Storm still has an active Apache project, and current releases include facilities absent from the early design. In this course, though, Storm serves as a historical vocabulary bridge. Current stateful engines usually make event time, managed operator state, durable checkpoints, rescaling, and backpressure explicit. Kafka is a retained log; Kafka Streams is a processing library. Referring to “Kafka” alone as a sister stream processor mixes those layers.
+Storm still has an active Apache project, and current releases include facilities absent from the early design. Here, Storm serves as a historical vocabulary bridge. Current stateful engines usually make event time, managed operator state, durable checkpoints, rescaling, and backpressure explicit. Kafka is a retained log; Kafka Streams is a processing library. Referring to “Kafka” alone as a sister stream processor mixes those layers.
 
 ## Follow one event through a current stream engine
 

@@ -1,11 +1,9 @@
 ---
 title: "Shared production services: queues, pools, and durable workflows"
-shortTitle: Shared services
 description: Define supported platform contracts, choose asynchronous delivery semantics, bound PostgreSQL connections, and recover durable work.
-collection: cloud-infrastructure
 slug: shared-production-services
 order: 11
-number: CI11
+identifier: CI11
 duration: 60 min
 difficulty: Advanced
 tags:
@@ -21,16 +19,7 @@ tags:
 
 A shared production service is an owned contract around a resource boundary. The contract states who may request work, what state persists, which limit applies, how retries behave, and what evidence tells a caller that the service is healthy or blocked.
 
-## Questions this note answers
-
-- Turn repeated infrastructure work into a supported, versioned platform interface
-- Choose among a work queue, publish-subscribe topic, event bus, retained log, and durable workflow
-- State acknowledgement, retry, ordering, replay, and dead-letter ownership before naming a messaging product
-- Size a PgBouncer fleet against the PostgreSQL server-connection budget
-- Identify application behavior that conflicts with transaction pooling
-- Drain and diagnose a connection pool without hiding database saturation
-- Separate process restart, durable workflow recovery, stuck-work repair, and retention
-- Trace a fictional DBOS workflow through process restart and effect recovery
+This note uses three independent cases rather than one request path: asynchronous delivery, PostgreSQL connection pooling, and durable workflow execution. The common subject is the platform contract around each resource, not a requirement to deploy all three together.
 
 ## A platform should expose owned, versioned interfaces
 
@@ -42,7 +31,7 @@ Version the contract independently from its implementation when callers should n
 
 The smallest useful status surface answers four questions: was the request accepted, which owner is acting on it, what condition blocks progress, and which observed resource or operation proves completion? A green API response without that later state leaves users dependent on platform operators for ordinary diagnosis.
 
-## Choose an asynchronous contract, not an “event service”
+## Case 1: expose an asynchronous contract, not an “event service”
 
 Amazon Simple Queue Service (SQS) stores work for competing consumers. A consumer receives a message under a visibility timeout and deletes it after success; Standard queues provide at-least-once delivery, so processing still needs idempotency. First-in, first-out (FIFO) queues add ordering within message groups and broker-side deduplication rules, but they cannot make an external database or payment side effect exactly once.
 
@@ -56,9 +45,9 @@ Amazon Simple Notification Service (SNS) publishes one message to multiple subsc
 | Consumers need old ordered records           | Partitioned retained log                    | Partition key, ordering scope, retention, offset ownership, replay rate       |
 | A multi-step operation must survive restarts | Durable workflow                            | Workflow identity, persisted step boundary, timer, retry, code-version policy |
 
-The selection questions are concrete: does one worker or every subscriber need the item, must it be replayed, what is ordered, who owns acknowledgement, how long must it remain available, and where do failed messages wait? “Asynchronous” alone answers none of them.
+[CI7: Kafka as a replicated event log](07-kafka-replicated-event-log.md) introduces these asynchronous shapes before deriving Kafka's retained-log mechanism. At the platform boundary, the selection questions remain concrete: does one worker or every subscriber need the item, must it be replayed, what is ordered, who owns acknowledgement, how long must it remain available, and where do failed messages wait? “Asynchronous” alone answers none of them.
 
-## PgBouncer multiplexes clients onto a bounded server pool
+## Case 2: PgBouncer multiplexes clients onto a bounded server pool
 
 An application opens client connections to PgBouncer; PgBouncer opens a smaller, bounded set of server connections to PostgreSQL for each database-and-user pool. `max_client_conn` limits accepted clients, while pool and database limits constrain server connections. Waiting clients are backpressure, not free capacity: they retain application work and can pass their deadlines while the database remains busy. Size the full fleet, including rollout surge and administrative headroom, against the database connection budget.
 
@@ -83,7 +72,7 @@ Remove a pooler instance from new traffic before termination, then use a support
 
 A drain deadline must match the application deadline. If a session-mode client can remain connected indefinitely, a graceful shutdown can also remain open indefinitely. The rollout policy needs a maximum wait and a documented result for work still attached when that wait expires.
 
-## Durable workflows persist progress, not process lifetime
+## Case 3: durable workflows persist progress, not process lifetime
 
 A durable workflow runtime records workflow and step progress so a new process can continue after the original process stops. The persisted record is the authority; a Pod, thread, or worker lease is temporary execution capacity. Give each workflow a stable identity, store completed step results or transaction boundaries, and make timers and queued starts recoverable rather than keeping them only in process memory.
 
@@ -108,7 +97,7 @@ The bookshop uses DBOS for a fictional `build_monthly_export` workflow. An API a
 
 Suppose a worker writes the object and loses its database connection before it records completion. A restarted worker reads workflow history and reaches the same step again. The object key is deterministic, so the step first checks whether that key already contains the expected checksum. A match completes the step without another upload; a mismatch marks the workflow for repair instead of overwriting uncertain data. Persisted workflow progress narrows the retry boundary, while the object-store check resolves the external effect.
 
-Keep the operating loops separate. Kubernetes readiness proves that a worker can reach the workflow database and accept work. A stuck-work scanner finds workflows whose progress age exceeds the written policy and sends them to an owned repair path. A retention job removes eligible completed history in bounded batches. A deploy either keeps code compatible with running histories or leaves old workers available until those histories finish. Every name and value in this case belongs only to the exercise.
+Keep the operating loops separate. Kubernetes readiness proves that a worker can reach the workflow database and accept work. A stuck-work scanner finds workflows whose progress age exceeds the written policy and sends them to an owned repair path. A retention job removes eligible completed history in bounded batches. A deploy either keeps code compatible with running histories or leaves old workers available until those histories finish. Every name and value in this case belongs only to this fictional example.
 
 _Process restart, workflow recovery, stuck-work repair, and retention remain four mechanisms._
 

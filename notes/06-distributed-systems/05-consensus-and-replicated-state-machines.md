@@ -1,11 +1,9 @@
 ---
-title: Consensus and Replicated State Machines
-shortTitle: Consensus and replicated logs
-description: Build one fault-tolerant authority from terms, quorums, ordered log entries, deterministic application, snapshots, and explicit client retry semantics.
-collection: distributed-systems
+title: Consensus, Replicated State Machines, and etcd
+description: Build one fault-tolerant authority from terms, quorums, ordered log entries, deterministic application, snapshots, and retry semantics, then map those rules to etcd.
 slug: consensus-and-replicated-state-machines
 order: 5
-number: DS5
+identifier: DS5
 duration: 3 hours
 difficulty: Advanced
 tags:
@@ -15,23 +13,12 @@ tags:
   - quorums
   - replicated-log
   - fencing
+  - etcd
 ---
 
 ## Working model
 
 Consensus is a protocol for making one decision survive disagreement, delay, and crash failures. A replicated state machine repeats that decision for a sequence of commands so several machines behave like one durable authority.
-
-## Questions this note answers
-
-- Separate failure detection, leader election, consensus, and replication
-- State consensus safety and liveness without saying only "all nodes agree"
-- Read a client-visible history and decide whether one register is linearizable
-- Separate single-object linearizability from transaction serializability
-- Explain why majority quorums prevent two conflicting committed values
-- Follow one command through a Raft term, replicated log, commit, and apply step
-- Relate Paxos proposers, acceptors, and ballots to the same quorum invariant
-- Explain why retries, membership changes, snapshots, and external side effects still need design
-- Diagnose a cluster by term, commit index, applied index, and quorum reachability
 
 ## Start with the failure that a leader alone cannot solve
 
@@ -139,6 +126,22 @@ A leader's presence does not automatically make every read linearizable. A leade
 
 Finally, committing `send email` or `write object to external store` does not make the external effect transactional with the log. The replicated state machine should commit an intent with a stable ID, perform the effect through an idempotent or deduplicated interface, and record the observed result. When an external resource must reject stale leaders, send a monotonically increasing fencing token and make that resource enforce it.
 
+## Map Raft concepts to etcd
+
+A production etcd cluster is one Raft replication group, usually with three or five voting members. Every successful write joins the same ordered log and reaches a quorum before etcd applies it to the key-value store. Moving from three to five members raises permanent-failure tolerance from one member to two, but it also adds replication work; it does not shard one keyspace or create another independent write stream. The Kubernetes consequences appear in [CI3: Control planes, etcd, and reconciliation](../01-cloud-infrastructure/03-control-planes-and-reconciliation.md).
+
+etcd stores multiple versions of keys. A transaction that changes one or several keys advances the cluster-wide revision once, and each changed key records that revision. Compare predicates let a transaction update state only when a version, create revision, modification revision, value, or lease still matches. This is the practical bridge from the replicated log to optimistic concurrency: a controller can reject an update based on state it no longer owns.
+
+The read mode changes the promise. A linearizable range read confirms current authority before returning and respects completed writes in real-time order. A serializable read may run against a member's local applied state without that confirmation, reducing coordination while permitting stale data. The option is about consistency, not object encoding; both return data from the same multi-version concurrency control (MVCC) keyspace.
+
+Watches stream key changes after a requested revision and preserve revision order, but they are not linearizable reads and do not promise bounded delivery time. A slow watcher can fall behind. Once compaction has removed the requested history, the client must read current state and start a new watch from a newer revision. Controllers therefore pair list, watch, relist, and idempotent reconciliation instead of treating a watch connection as a permanent event queue.
+
+MVCC compaction discards historical versions before a selected revision; it does not create a backup or shrink the backend file by itself. An operator snapshot copies the backend for disaster recovery, while Raft also snapshots applied log prefixes so a lagging member need not replay the entire log. Neither snapshot is a live replica. Recovery still needs a restore procedure, new cluster membership, revision handling for existing watchers, and proof that clients can resume.
+
+An etcd lease attaches a time to live to keys and revokes those keys when keepalives stop long enough for the lease to expire. That mechanism is useful for liveness records and leader sessions, but expiration alone cannot fence a paused process from an external database, queue, or device. Store a monotonically increasing authority epoch, often derived from a committed revision, and make every protected resource reject work from older epochs. An etcd lease ID is not a substitute for that downstream check.
+
+Chubby applies the same broad pattern through a consensus-backed lock and small-file service used for coarse-grained coordination. Its sequencer mechanism exists because a client can pause, lose its lock, and later continue running. A storage system that accepts a Chubby lock holder's work must validate the current sequencer; ownership recorded only inside the client process is not enough.
+
 ## Inspect authority, durability, and application progress separately
 
 During an incident, collect each member's current term, voted-for record, last log index and term, commit index, applied index, snapshot index, and peer reachability. A node that repeatedly becomes candidate without winning may lack quorum connectivity. A stable leader whose commit index does not advance may be unable to replicate durably to a majority. A growing gap between commit and applied indexes points instead to slow state-machine work. Frequent snapshot installation may mean a follower cannot retain or consume the live log fast enough.
@@ -156,6 +159,7 @@ Consensus turns intersecting quorum evidence into one durable decision, and a re
 - **Retries are part of the state machine contract.** Stable operation IDs and durable deduplication results handle the ambiguous interval between server commit and client receipt.
 - **Reconfiguration, snapshots, and reads require protocol rules.** Voter sets must transition safely, snapshots must preserve recovery state, and linearizable reads must confirm current authority.
 - **Consensus does not atomically control the outside world.** External side effects need idempotency, reconciliation, and fencing against stale actors.
+- **etcd exposes a revisioned MVCC API over one Raft group.** Linearizable and serializable reads make different freshness promises; watches require relisting after compaction, and leases still need downstream fencing for external effects.
 
 ## References
 
@@ -165,4 +169,6 @@ Consensus turns intersecting quorum evidence into one durable decision, and a re
 - [Ongaro and Ousterhout: In Search of an Understandable Consensus Algorithm](https://raft.github.io/raft.pdf)
 - [Fischer, Lynch, and Paterson: Impossibility of Distributed Consensus with One Faulty Process](https://groups.csail.mit.edu/tds/papers/Lynch/jacm85.pdf)
 - [Google: The Chubby Lock Service for Loosely-Coupled Distributed Systems](https://research.google/pubs/the-chubby-lock-service-for-loosely-coupled-distributed-systems/)
-- [etcd API guarantees](https://etcd.io/docs/v3.5/learning/api_guarantees/)
+- [etcd v3.7 API guarantees](https://etcd.io/docs/v3.7/learning/api_guarantees/): Defines linearizable and serializable reads, revisions, watches, and leases.
+- [etcd v3.7 API](https://etcd.io/docs/v3.7/learning/api/): Describes the MVCC key-value, transaction, watch, and lease interfaces.
+- [etcd v3.7 maintenance](https://etcd.io/docs/v3.7/op-guide/maintenance/): Separates compaction, defragmentation, and snapshot operation.

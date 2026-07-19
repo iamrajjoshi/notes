@@ -1,11 +1,9 @@
 ---
 title: Filesystems, Shared Memory, and Edge Systems
-shortTitle: Filesystems, memory, and edge
 description: Trace state through file metadata, client caches, distributed blocks, page coherence, remote memory, and battery-powered devices without confusing a convenient abstraction with its failure behavior.
-collection: distributed-systems
 slug: filesystems-shared-memory-and-edge
 order: 9
-number: DS9
+identifier: DS9
 duration: 3.5 hours
 difficulty: Intermediate
 tags:
@@ -21,17 +19,13 @@ tags:
 
 A shared file, memory page, or sensor reading looks local only because another layer translates names and operations into network messages. Read the metadata authority, cache rule, write-visibility point, retry identity, and recovery path before trusting that abstraction.
 
-## Questions this note answers
+This note crosses three scales:
 
-- Define file data, metadata, directories, file descriptors, links, offsets, and cache entries
-- Follow one remote file read through the virtual filesystem and an NFS server
-- Separate historical stateless NFS from current NFSv4 state, locking, and delegations
-- Compare AFS, GFS, HDFS, object storage, block storage, and a shared POSIX filesystem
-- Follow an HDFS write through NameNode allocation, the DataNode packet pipeline, acknowledgement, recovery, and later replication repair
-- Explain why client caching creates a consistency contract rather than free speed
-- Trace a distributed shared-memory read miss and write invalidation
-- State what RDMA does and what coherence, ordering, and durability it does not supply
-- Build an edge telemetry path and calculate a one-year device energy budget
+1. Files and distributed filesystems hide remote namespace and durable-byte ownership.
+2. Distributed shared memory and remote direct memory access hide volatile remote-memory ownership.
+3. Edge systems hide an intermittent, power-limited path behind a sensor or control API.
+
+At each scale, identify the stable object, current authority, cache rule, completed-write boundary, retry identity, and recovery evidence.
 
 ## Begin with an ordinary file
 
@@ -150,6 +144,8 @@ Replication is not backup. A mistaken delete or corrupt write can replicate perf
 
 ## Distributed shared memory turns page faults into messages
 
+The filesystem sections hid remote durable bytes behind file operations. The next sections apply the same ownership and visibility questions to volatile memory, where a stale holder can continue reading or writing after another process acquires authority.
+
 Distributed shared memory (DSM) gives processes on different machines the illusion of shared virtual-memory pages. Each process caches pages. A local access hits that cache; a missing page triggers a fault handler that asks the DSM protocol for data and permission.
 
 The lecture uses a simple invalidate protocol with read and write states. Several processes may hold read copies, but only one owner may hold a writable copy. Work two cases:
@@ -173,6 +169,8 @@ RDMA does not automatically make remote memory act like a coherent local cache. 
 Keep RDMA distinct from CXL-style coherent memory fabrics. Both can support memory disaggregation, but they expose different reach, coherence, failure, and software assumptions. Neither makes a rack or region one failure-free machine.
 
 ## An edge node has a power budget before it has a software stack
+
+Distributed shared memory and remote direct memory access assume powered machines on a managed network. Edge systems keep the same identity, retry, ordering, and recovery problems, but add intermittent gateways, small local stores, physical capture, and a finite energy budget.
 
 A sensor node combines one or more sensors, a processor, memory, a communication link, and a power source. I²C and SPI connect components inside a device; they are not wide-area network protocols. BLE, IEEE 802.15.4/Thread, Wi-Fi, and LoRaWAN solve different range, bitrate, topology, and energy problems. CoAP and MQTT sit higher in the stack and define application exchange patterns.
 

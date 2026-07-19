@@ -1,11 +1,9 @@
 ---
 title: Choose Storage from Access Patterns
-shortTitle: Storage and data modeling
 description: Turn product operations into a data model, select a storage family from its access paths and invariants, and design transactional and analytic projections for their real queries.
-collection: system-design
 slug: storage-data-modeling
 order: 3
-number: SD3
+identifier: SD3
 duration: 2 hours
 difficulty: Core
 tags:
@@ -24,18 +22,9 @@ tags:
 
 A database is a set of paid access paths. The primary key buys one path; each index buys another by charging every write, consuming storage, and adding a consistency obligation.
 
-## Questions this note answers
-
-- Define durable state, authority, row, primary key, secondary index, transaction, and projection
-- Turn operations into an access-pattern table before choosing a database
-- Turn an orders-and-line-items model into relational constraints, indexes, and physical reads
-- Choose a storage model by query, update, transaction, and retention behavior
-- Order composite index columns for equality, range, and sort predicates while accounting for each index's write and maintenance cost
-- Trace a cursor-paginated feed through its ordered index
-- Explain how ClickHouse column files, sorted parts, sparse marks, and background merges serve analytic scans
-- Keep object bytes, search indexes, and transactional metadata in suitable stores
-
 ## Learn the storage nouns before choosing a product
+
+The [Data Systems foundation sequence](../07-data-systems/INDEX.md#reading-order) derives access-pattern modeling, storage-engine shapes, and query and index behavior in slower detail. This note applies that sequence to one interview design.
 
 Persistent storage keeps data beyond one application process and, under its stated durability contract, beyond a crash. A database adds ways to identify, update, constrain, and query that state. The application still has to decide which copy is authoritative and what an acknowledged write promises.
 
@@ -230,11 +219,11 @@ Start with the exact slow operation and its distribution by tenant or parameter 
 
 An extra index is the right answer only when it creates the missing access path and its write cost fits the budget. If time comes from lock contention, a new index may add more write work without shortening the critical section. If the search projection is stale, inspect relay lag, failed batches, and the last applied source position; do not repair the projection by treating it as a second authority. Rebuild from the transactional record, then compare counts and deletion markers before switching reads back.
 
-> **Deletion check.** A user-facing delete is incomplete until the authoritative row, object bytes, search projection, caches, and scheduled rebuild inputs follow the stated retention policy.
+> **Complete deletion boundary.** A user-facing delete is incomplete until the authoritative row, object bytes, search projection, caches, and scheduled rebuild inputs follow the stated retention policy.
 
 The schema and access paths now have enough shape to ask how the relational engine keeps concurrent versions, commits changes, cleans obsolete rows, and changes an index while traffic continues. [SD4](04-relational-engine-internals.md) follows those mechanisms. Keep the distinction clear: this note decides which data paths the product needs; the next note explains the runtime and operating costs behind one common authority.
 
-## Running design checkpoint
+## Continuing worked case: authoritative data model
 
 PostgreSQL becomes the authoritative store because order creation needs tenant isolation, uniqueness, line-item constraints, state transitions, and one local transaction. The logical schema has `orders`, `order_line_items`, `operation_results`, and `notification_outbox`. `orders` uses `(tenant_id, id)` as its identity; line items use `(tenant_id, order_id)` as a foreign key to `orders (tenant_id, id)`. `operation_results` has a unique `(tenant_id, idempotency_key)` path and retains the normalized request hash plus the first result.
 
