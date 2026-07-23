@@ -4,11 +4,12 @@ description: Trace packets through Services and gateways, bind durable volumes w
 slug: kubernetes-networking-storage-security
 order: 4
 identifier: CI4
-duration: 125 min
+duration: 145 min
 difficulty: Core
 tags:
   - CNI
   - Services
+  - NLB
   - Gateway API
   - CSI
   - RBAC
@@ -46,11 +47,118 @@ The Kubernetes network model gives each Pod a cluster-wide Internet Protocol (IP
 
 A ClusterIP is a virtual destination, not a process listening on every node. kube-proxy or another service implementation watches Services and EndpointSlices, then programs packet handling. Debug in that order: name resolution, Service definition, ready endpoints, policy, route, listener.
 
-Service type describes exposure, not the application protocol. `ClusterIP` supplies an internal virtual address. `NodePort` also opens a port on eligible nodes. `LoadBalancer` asks an installed cloud integration to provision or configure an external load balancer, while `ExternalName` returns a DNS alias and creates no proxy path. Gateway or Ingress adds L7 routing in front of Services; it does not replace the Service-to-endpoint contract.
+Service type describes exposure, not the application protocol. `ClusterIP` supplies an internal virtual address. `NodePort` also opens a port on eligible nodes. `LoadBalancer` asks an installed cloud integration to provision or configure a load balancer outside the cluster; provider settings determine whether it is public or private. `ExternalName` returns a DNS alias and creates no proxy path. Gateway or Ingress adds L7 routing in front of Services; it does not replace the Service-to-endpoint contract.
 
 New tooling should read EndpointSlices. Kubernetes deprecated the older Endpoints API in v1.33 because it truncates large backend sets and lacks dual-stack and newer routing data. Existing Endpoints objects still work, but their presence is not a reason to build another dependency on them.
 
 > **Fictional case.** The bookshop cluster uses the Amazon VPC CNI for Pod addresses, CoreDNS plus NodeLocal DNSCache for lookup, and kube-proxy for Service traffic. A second toy cluster uses Cilium for both Service handling and NetworkPolicy, which is why diagnosis starts by identifying the installed implementation instead of assuming every cluster programs packets the same way.
+
+### Use an internal NLB as a stable VPC entry point
+
+A process in the same VPC but outside Kubernetes, such as a Lambda function or EC2 worker, usually cannot rely on cluster DNS or a ClusterIP. Calling a Pod IP directly is also unsafe because that address changes when Kubernetes replaces the Pod. An internal Network Load Balancer (NLB) gives the VPC caller a stable DNS name while Kubernetes and AWS keep its changing Pod targets current.
+
+The NLB path has five pieces:
+
+| Piece                        | Responsibility                                                                                                                   |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| NLB DNS name                 | Stable name the caller resolves; the answers are private NLB frontend addresses                                                  |
+| Listener                     | Accepts a transport protocol and port, such as TCP `8080`                                                                        |
+| Target group                 | Holds eligible destination IP and port pairs                                                                                     |
+| Health check                 | Decides which registered targets may receive new connections                                                                     |
+| AWS Load Balancer Controller | Reconciles the Kubernetes Service into the NLB, listener, target group, security rules, target registrations, and Service status |
+
+Suppose a private job must call a catalog API running in EKS. A modern Service request can look like this:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-catalog-api
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  selector:
+    app: catalog-api
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+```
+
+`type: LoadBalancer` is a request for infrastructure; it does not create the AWS objects by itself. `loadBalancerClass` assigns that request to the AWS Load Balancer Controller. The `internal` scheme places the NLB in private subnets, so it has no internet-facing entry point. The `ip` target type registers Pod IPs directly. With `instance` targets, the target group instead contains node IP and NodePort pairs, adding the node-side Service path before the packet reaches a Pod.
+
+Older manifests may use this annotation instead of `loadBalancerClass`:
+
+```yaml
+service.beta.kubernetes.io/aws-load-balancer-type: external
+```
+
+Here `external` assigns reconciliation to the external AWS controller rather than the legacy in-tree controller. It does not make the load balancer internet-facing; the scheme controls that choice. Treat controller ownership and network exposure as separate settings.
+
+After reconciliation, the provider state resembles:
+
+```text
+Kubernetes Service
+  -> internal NLB with a stable private DNS name
+      -> TCP listener :8080
+          -> IP target group
+              -> 10.0.42.187:8080  healthy Pod
+              -> 10.0.56.91:8080   healthy Pod
+```
+
+The caller's connection follows:
+
+```text
+private VPC caller
+  -> resolve internal NLB DNS
+  -> connect to one NLB frontend address:8080
+  -> listener selects the target group
+  -> NLB selects one healthy Pod IP:8080
+  -> application handles the HTTP request
+```
+
+The NLB operates at Layer 4 for a TCP listener. It selects a target for the connection but does not route by HTTP host or path. The HTTP bytes pass through to the application. Use an ALB, Gateway, or another Layer 7 proxy when routing rules must inspect the request.
+
+Pod replacement changes targets without changing the caller configuration:
+
+```text
+before: target group -> 10.0.42.187:8080
+after:  target group -> 10.0.55.23:8080
+caller: same NLB DNS name
+```
+
+The controller removes the old target and registers the new ready endpoint. The NLB cannot move an established TCP connection to another Pod, so requests in flight during replacement may fail. Clients still need bounded timeouts, safe retries, and idempotency for retried writes.
+
+An internal NLB narrows reachability; it does not provide application identity, authorization, or encryption. Security groups and routes must admit the VPC caller, NetworkPolicy must admit traffic to the selected Pods when enforced, and the application must authenticate the caller. Plain TCP or HTTP remains plaintext even on a private route, so use TLS when the threat model requires encryption inside the VPC.
+
+### Set up and verify the path
+
+1. Install the AWS Load Balancer Controller, including its Kubernetes permissions and AWS workload identity.
+2. Give Pods VPC-routable addresses for IP targets, normally through the Amazon VPC CNI, and make suitable private subnets discoverable to the controller.
+3. Create the Deployment and LoadBalancer Service with matching selectors, ports, scheme, and target type.
+4. Permit the caller-to-listener and NLB-to-target paths through routes, security groups, network ACLs, and NetworkPolicy.
+5. Define readiness and target health checks that answer whether the process can accept new work.
+6. Configure the caller with the NLB hostname or a private DNS alias, plus connection and request timeouts.
+7. Test Pod replacement and controller reconciliation rather than checking only the first successful request.
+
+Debug from desired state toward the socket:
+
+```text
+Service status has NLB hostname?
+  -> Service selector has ready EndpointSlices?
+  -> controller created listener and target group?
+  -> target group reports useful healthy targets?
+  -> caller resolves a private NLB address?
+  -> VPC route and security rules admit both directions?
+  -> TCP connects?
+  -> TLS and HTTP succeed?
+```
+
+[CI12: Internet edge and private connectivity](12-internet-edge-and-private-connectivity.md) covers DNS caching, listener and target-group state, cross-zone balancing, health-driven fail-away, TLS termination, and PrivateLink in more depth.
 
 ## Map each network and storage object to its operator
 
@@ -138,6 +246,7 @@ Kubernetes networking, storage, and security objects are requests to controllers
 - CNI creates Pod interfaces, addresses, and routes; CoreDNS resolves names; EndpointSlices list ready Service backends; kube-proxy or an alternative programs the Service data path.
 - A Service port is the stable client-facing port, while targetPort is the listening port on selected Pods. NodePort adds a node-facing port for the Service types that use it.
 - ClusterIP, NodePort, LoadBalancer, and ExternalName expose a Service in different ways. Gateway and Ingress add protocol-aware routing in front of that stable backend contract.
+- An internal NLB gives callers elsewhere in the VPC a stable private entry point. The AWS Load Balancer Controller converts the Service into listeners, target groups, health checks, and changing Pod registrations.
 - EndpointSlice is the current backend-discovery API. The older Endpoints API is deprecated and can truncate a set larger than 1,000 endpoints.
 - Trace service traffic in order: DNS → Service ports and selector → EndpointSlices → network policy → route or proxy rules → target listener. No endpoints usually means selector or readiness, not packet routing.
 - L4 load balancing chooses with connection metadata. L7 proxying terminates protocol state and adds a separate upstream connection, HTTP routing, timeouts, buffering, and retry behavior.
@@ -159,5 +268,7 @@ Kubernetes networking, storage, and security objects are requests to controllers
 - [Kubernetes NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
 - [Kubernetes Service debugging](https://kubernetes.io/docs/tasks/debug/debug-application/debug-service/)
 - [Amazon VPC CNI concepts](https://docs.aws.amazon.com/eks/latest/userguide/managing-vpc-cni.html)
+- [AWS Load Balancer Controller: Network Load Balancer](https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/guide/service/nlb/)
+- [Amazon EKS: Route TCP and UDP traffic with Network Load Balancers](https://docs.aws.amazon.com/eks/latest/userguide/network-load-balancing.html)
 - [Kubernetes NodeLocal DNSCache](https://kubernetes.io/docs/tasks/administer-cluster/nodelocaldns/)
 - [Amazon EBS CSI driver](https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html)
