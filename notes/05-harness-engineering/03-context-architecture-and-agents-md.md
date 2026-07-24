@@ -201,6 +201,26 @@ Long transcripts contain repeated plans, obsolete hypotheses, and raw output tha
 
 Budget both tokens and attention. Retrieve a narrow section before loading a whole document, prefer structured tool results to copied terminal noise, and preserve exact error text only while it supports diagnosis. Track context usage by category so a large policy block, a runaway tool result, and repeated conversation history do not collapse into one unexplained number.
 
+### Transcript, prompt cache, checkpoint, workspace, and memory are separate
+
+| Mechanism             | What it preserves                                                    | What it does not preserve                                          |
+| --------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Main transcript       | Messages and tool observations selected for one conversation         | Workflow ownership, workspace bytes, or durable learned facts      |
+| Workflow checkpoint   | Structured phase, receipts, ownership, budgets, and next safe action | Full conversational context                                        |
+| Workspace snapshot    | A selected filesystem generation or artifact set                     | Model conversation or external-effect completion                   |
+| Provider prompt cache | Reusable model computation for a compatible input prefix             | Durable state, replay guarantees, or semantic memory               |
+| Semantic memory       | Selected facts retrieved into later runs                             | Exact replay of the conversation in which each fact first appeared |
+
+Restoring a main transcript into a new provider session ID does not inherently prevent a prompt-cache hit. Session identity and cache identity are separate. Reuse depends on the provider contract, model and adapter version, an eligible identical prefix, cache annotations when required, tenant rules, and time-to-live. Put stable instructions and tool schemas before frequently changing run data when the provider can cache that prefix.
+
+Do not call this an optimization without measurements. If the adapter records no cache-write tokens, cache-read tokens, hit rate, latency change, or cost change, transcript replay may be cache-eligible but the platform has not proved that it receives a benefit. Add provider usage fields and compare equivalent resumed and cold turns before changing transcript shape around an assumed cache hit.
+
+Transcript restoration provides episodic continuity: the model can see selected prior messages again. It does not mean the system learned a fact for every future run. A semantic-memory layer needs tenant and user scope, provenance, confidence, freshness or expiry, correction and deletion, retrieval rules, and a policy that prevents untrusted text from becoming permanent authority.
+
+If a platform uploads a main transcript and later forks or replays it, but has no fact-extraction, indexing, and retrieval path, it has transcript resume and no semantic-memory layer. A memory-layer design in scratch notes remains a proposal until those write, retrieval, correction, and deletion paths exist in production.
+
+Filesystem and workflow continuity also remain independent. A transcript can resume while unpushed files are gone, and a recovered workspace can exist while the workflow no longer knows which effect is safe next. Link them with stable identifiers and explicit checkpoint references rather than treating one session object as all forms of memory.
+
 > **Toy assembler.** Suppose a run records token use by context class, loads one task-specific instruction file, and gives the model file references instead of copying every artifact into the prompt. The trace can then show whether policy, evidence, history, or tool output displaced the missing fact.
 
 ### Worked boundary: keep ambient context separate from capabilities
@@ -246,6 +266,7 @@ Context quality depends on selection, provenance, precedence, and freshness, not
 - Remember that Codex discovers the chain at run start and applies a size limit; restart after editing instruction files and keep policy enforcement outside the prompt.
 - Treat issue text, web pages, and tool output as evidence that cannot grant permissions or override repository policy.
 - Compact to the current goal, decisions with reasons, artifact versions, proof status, open risks, and next action; retain links to raw evidence.
+- Keep transcript restoration, workflow checkpoints, workspace snapshots, provider prompt caching, and semantic memory as separate mechanisms with separate identities and lifetimes.
 - Measure missing retrieval, stale evidence, precedence mistakes, lost provenance, and context use by class as separate failures.
 
 ## References

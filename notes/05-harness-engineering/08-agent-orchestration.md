@@ -201,6 +201,14 @@ Isolated context gives each worker the task slice, source revision, tools, and e
 
 A useful default is a shared immutable contract plus isolated working context. Share stable identifiers and accepted artifacts through the store; do not expose every worker's scratch reasoning. Use a shared transcript only when turns truly depend on the same evolving conversation and all members have compatible data authority.
 
+### A child transcript is an audit record, not resumed child state
+
+A child worker can keep a private transcript for audit while returning only one typed result to its parent. The parent's main transcript then contains the request and returned result, not the child's abandoned hypotheses, private tool observations, unfinished plan, or full scratch context.
+
+Restoring the parent transcript does not recreate that child process. The parent can continue from the accepted result, but new child work starts in a fresh context unless the runtime explicitly restores a child checkpoint. Any child operation that must survive replacement needs its own artifact, receipt, or checkpoint. Retaining the detailed transcript elsewhere records what the worker observed; it does not prove that the observation was true or remains current, and it does not make the child executable state resumable.
+
+This separation controls context growth and keeps least-privilege boundaries visible. Promote evidence that later decisions need into a typed parent-visible record. Keep the full child trace linked for audit instead of silently copying it into every resumed model request.
+
 ## Run two inspections before one owned patch
 
 A task asks for a retry regression fix. Worker A reads the retry implementation and returns the current state transition with line references. Worker B reads the focused tests and returns the missing failure case. Both operate on immutable revision r1 with no write tools, so they run concurrently. The join checks their revision IDs and retains a disagreement about whether timeout errors count toward the attempt limit.
@@ -263,6 +271,7 @@ Orchestration should expose dependencies and ownership, not add agents for appea
 - Reject results whose run ID, source revision, or plan epoch is stale, and preserve conflicts instead of averaging them away.
 - Charge children to one parent ledger; the runner owns timeouts, worker loss, cancellation, uncertain-effect reconciliation, and terminal state.
 - Prefer a shared immutable contract with isolated working context and typed evidence records unless the work needs one evolving transcript.
+- A child transcript retained for audit does not recreate that child on parent resume. Promote required evidence, artifacts, receipts, and checkpoints into parent-visible records.
 
 ## References
 

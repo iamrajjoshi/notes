@@ -87,6 +87,21 @@ ConfigMaps carry non-secret configuration. Secret objects improve API separation
 - DaemonSet: one eligible copy per node
 - Job or CronJob: finite work now or on a schedule
 
+### A DaemonSet derives its count from eligible nodes
+
+A Deployment starts from a requested replica count. A DaemonSet starts from the current node set. Its controller creates one Pod on every eligible node, creates another when a matching node joins, and removes the corresponding Pod when that node leaves. “One per node” means one per node that passes selectors, affinity, taints, and tolerations, not one per cluster and not one sidecar inside every application Pod.
+
+This fits node-local infrastructure such as CNI and CSI agents, log collectors, security sensors, and storage daemons. Each DaemonSet Pod still requests CPU and memory, so its overhead reduces the allocatable capacity left for application Pods. A node autoscaler must account for that overhead when deciding whether a new machine can fit pending work.
+
+| Controller        | Desired cardinality                           | Identity and completion contract                                     |
+| ----------------- | --------------------------------------------- | -------------------------------------------------------------------- |
+| Deployment        | Explicit interchangeable replica count        | Replaceable Pods; rolling rollout through ReplicaSets                |
+| StatefulSet       | Explicit replica count with stable ordinals   | Ordered identity and usually one persistent claim per ordinal        |
+| DaemonSet         | One Pod on each eligible node                 | Node-local instance follows node eligibility and lifetime            |
+| Job               | Enough Pods to reach the declared completions | Finite work; retries until success or its failure policy stops it    |
+| CronJob           | Jobs created from a schedule                  | Scheduling policy plus each child Job's finite-work contract         |
+| Custom controller | Whatever relationship its API defines         | Must be learned from its custom resource, status, and reconciliation |
+
 ## Read a fictional base as one workload contract
 
 Suppose the bookshop keeps the following toy repository. These paths and values exist only in this note:
@@ -105,6 +120,8 @@ The base includes a Deployment and Service. Both use the label `app: storefront-
 Render each overlay with `kubectl kustomize` and inspect the result before applying it. A changed image digest alters the Pod template and starts a rollout. A changed Service selector alters traffic membership without replacing Pods. A selector typo can therefore produce healthy Pods and an empty EndpointSlice—the Kubernetes object that lists a Service's current network backends—at the same time. CI4 follows that traffic path in full.
 
 _The example is self-contained; build the field relationships rather than copying a deployment from another service._
+
+The word `base` is overloaded. A Kustomize base is reusable YAML that renders Kubernetes objects. An OCI image root filesystem is the packaged directory tree from which a container starts. An immutable filesystem template can be a separate ext4 block image selected by an identifier in that YAML. Patching a template UUID into an overlay changes a reference; it does not insert the referenced repository files into the Kubernetes manifest.
 
 ## A Deployment changes ReplicaSets when its Pod template changes
 
@@ -143,7 +160,8 @@ Kubernetes schedules process groups, not miniature machines. The image defines w
 - Containers in one Pod share a node, network namespace, and optionally volumes. They do not share filesystems or process namespaces by default.
 - Regular init containers finish before application startup. Restartable init containers provide native sidecar lifecycle on supported Kubernetes versions.
 - Pods are disposable identities. Put stable network access behind a Service and durable state behind an external store or persistent volume.
-- Use Deployments for interchangeable replicas, StatefulSets for ordered identity or per-replica claims, DaemonSets for node-scoped work, and Jobs or CronJobs for finite work.
+- Use Deployments for interchangeable replicas, StatefulSets for ordered identity or per-replica claims, and Jobs or CronJobs for finite work. A DaemonSet derives one instance from each eligible node and consumes capacity there.
+- Keep a Kustomize YAML base, an OCI image root filesystem, and an immutable filesystem-template base separate. Patching an identifier into YAML selects bytes stored elsewhere.
 - A Deployment rollout begins only when its Pod template changes. A ConfigMap edit alone does not replace Pods unless a version or content hash is part of that template.
 - During rollout, maximum Pods equal desired replicas plus max surge; minimum available Pods equal desired replicas minus max unavailable. Readiness, not merely Running state, determines availability.
 - Diagnose from controller to process: Deployment conditions, ReplicaSet counts, scheduling and mount events, image pulls, current and previous logs, probe state, Service selectors, and ready EndpointSlices.
@@ -160,6 +178,7 @@ Kubernetes schedules process groups, not miniature machines. The image defines w
 - [Kubernetes sidecar containers](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/)
 - [Kubernetes workload management](https://kubernetes.io/docs/concepts/workloads/controllers/)
 - [Kubernetes Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [Kubernetes DaemonSets](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/)
 - [Kubernetes ConfigMaps](https://kubernetes.io/docs/concepts/configuration/configmap/)
 - [Kubernetes Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
 - [Declarative management with Kustomize](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/)

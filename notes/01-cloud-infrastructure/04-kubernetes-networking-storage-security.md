@@ -53,6 +53,25 @@ New tooling should read EndpointSlices. Kubernetes deprecated the older Endpoint
 
 > **Fictional case.** The bookshop cluster uses the Amazon VPC CNI for Pod addresses, CoreDNS plus NodeLocal DNSCache for lookup, and kube-proxy for Service traffic. A second toy cluster uses Cilium for both Service handling and NetworkPolicy, which is why diagnosis starts by identifying the installed implementation instead of assuming every cluster programs packets the same way.
 
+### CNI chaining can split address allocation from policy
+
+A cluster can use the Amazon VPC CNI as its primary network setup and chain Cilium after it. In that arrangement, the VPC CNI prepares the Pod interface, allocates a VPC-routable address from EC2 network-interface capacity, and installs the required routes. Cilium then attaches eBPF programs to the prepared interface for identity-aware policy, flow handling, and visibility.
+
+Exact ownership depends on the installed mode. Record which component owns IP address management, routes, Service handling, and NetworkPolicy before debugging. Do not assume that installing Cilium means it replaced the VPC CNI or kube-proxy.
+
+| Boundary            | Question it answers                                                       |
+| ------------------- | ------------------------------------------------------------------------- |
+| Amazon VPC CNI      | Which interface, VPC address, and route does this Pod receive?            |
+| Cilium ingress      | Which sources may send selected traffic into this destination Pod?        |
+| Cilium egress       | Which destinations may this selected source Pod contact?                  |
+| Hubble              | Which flows and policy verdicts were observed? It grants no permission.   |
+| gVisor              | Which syscall path separates the process from the host kernel?            |
+| Kubernetes RBAC     | Which Kubernetes API operations may this principal perform?               |
+| Cloud workload role | Which AWS API operations may the resulting temporary credentials perform? |
+| Application auth    | Which product objects and business actions may this caller use?           |
+
+Once policy selects a Pod for a direction, traffic not allowed by the resulting policy set is denied in that direction. If both source egress and destination ingress are isolated, both sides must allow the flow. For an FQDN egress rule, Cilium observes DNS queries and answers, then programs policy for the returned IP addresses. Ordinary L3/L4 packets carry an IP address and port, not the hostname that produced the address. The rule therefore depends on DNS visibility, answer lifetime, and shared-address behavior; it still cannot decide whether the application sends an HTTP read or write after connecting.
+
 ### Use an internal NLB as a stable VPC entry point
 
 A process in the same VPC but outside Kubernetes, such as a Lambda function or EC2 worker, usually cannot rely on cluster DNS or a ClusterIP. Calling a Pod IP directly is also unsafe because that address changes when Kubernetes replaces the Pod. An internal Network Load Balancer (NLB) gives the VPC caller a stable DNS name while Kubernetes and AWS keep its changing Pod targets current.
@@ -198,22 +217,138 @@ A volume outlives a Pod only according to its reclaim policy and backend durabil
 
 ### Advanced storage-driver case: an object-backed virtual block device
 
-The ordinary PVC, PV, and CSI path above is enough for a first reading. This case examines a driver whose block interface is assembled from object storage and node-local cache. Return to it after [LL4: Linux storage and I/O](../02-low-level-infrastructure/04-storage-and-io.md) and [CI14: Storage, backups, and disaster recovery](14-storage-backup-and-disaster-recovery.md) if flush, fencing, cache, and recovery contracts are unfamiliar.
+The ordinary PVC, PV, and CSI path above is enough for a first reading. This case examines drivers whose block interface is assembled from object storage and node-local cache. Return to [LL4: Linux storage and I/O](../02-low-level-infrastructure/04-storage-and-io.md) and [CI14: Storage, backups, and disaster recovery](14-storage-backup-and-disaster-recovery.md) if the block, mount, flush, cache, and recovery boundaries are unfamiliar.
 
-CSI standardizes calls between Kubernetes and a storage driver; it does not require the driver to map a volume to a provider block disk. A driver commonly has a controller component for operations such as create, delete, attach, and detach, plus a per-node component that registers with kubelet and handles stage and publish calls. The backend can therefore have a different durability and caching model from EBS, provided the driver states and implements that model.
+CSI standardizes calls between kubelet and storage plugins; it does not require a provider block disk or even a controller-side provisioner. Compare two valid designs:
 
-Suppose a toy driver exposes `archive-scratch` as a block device. Its authoritative chunks and volume manifest live in object storage, while a privileged node plugin keeps a disposable cache on local NVMe. After the external provisioner asks the controller to create a logical volume, the resulting PV stores an opaque volume handle. Once the scheduler chooses a node, kubelet asks that node's driver to stage the volume, the driver reconstructs or opens the virtual device, and kubelet mounts the filesystem into the Pod.
+| CSI design                   | Kubernetes objects and calls                                                                                                                                                                      | Possible durability contract                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Dynamically provisioned disk | A provisioner creates a volume and PV; the controller may attach it with `ControllerPublishVolume`; the node plugin may stage it with `NodeStageVolume` and publishes it with `NodePublishVolume` | Flush can wait for provider-block or remote-manifest durability            |
+| Inline ephemeral workspace   | The Pod embeds CSI volume attributes; kubelet generates an inline volume ID and calls the node plugin directly when the `CSIDriver` advertises the `Ephemeral` lifecycle mode                     | Ordinary writes can stay node-local until a periodic or unmount checkpoint |
 
-```text
-PVC -> external provisioner -> CSI controller -> logical volume handle
-Pod scheduled -> kubelet -> CSI node plugin -> virtual block device -> filesystem mount
-read miss -> node cache miss -> object chunk fetch
-acknowledged write -> durable chunk upload -> committed volume manifest
+For the first design, an object-backed driver could acknowledge a flush only after new immutable chunks and a committed volume manifest are durable. Losing a node should then discard only cache state. That is one possible contract, not a property CSI supplies.
+
+#### CSI can also be inline and node-only
+
+An inline CSI volume appears directly in a Pod specification. There may be no PVC, PV, StorageClass, external provisioner, requested capacity, or controller-side attach step. The driver must advertise `Ephemeral` in `CSIDriver.spec.volumeLifecycleModes`. Kubelet generates an opaque volume ID as `csi-<sha256(Pod UID + Pod volume name)>`, then gives that ID to the node plugin in `NodePublishVolume`. The driver name selects the plugin separately; it is not part of this hash.
+
+Pod metadata is conditional. When `CSIDriver.spec.podInfoOnMount` is true, kubelet also puts the Pod name, namespace, UID, and service-account name in `NodePublishVolume.volume_context`. Without that setting, the plugin still receives the generated volume ID but not those Pod fields.
+
+```yaml
+volumes:
+  - name: workspace
+    csi:
+      driver: scratch.csi.example
+      volumeAttributes:
+        templateBuildID: build-7f3
 ```
 
-The final line is the important contract. If the driver acknowledges a flush before the new chunks and manifest are durable, losing the node can lose acknowledged data. If it waits for remote commit, node loss should discard only cache state, although recovery may be slow and object-store unavailability can stop cache misses or new commits. A stale node must not publish an older manifest after another node takes ownership, so multi-attach policy, leases or fencing, cache invalidation, and mount recovery belong in the driver design.
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: scratch.csi.example
+spec:
+  attachRequired: false
+  podInfoOnMount: true
+  volumeLifecycleModes:
+    - Ephemeral
+```
 
-Kubernetes can report that the PVC is bound and the volume is mounted; those facts do not prove the driver's flush, snapshot, consistency, or recovery semantics. Read the exact driver contract before placing a database or another write-sensitive filesystem on it. Treat local cache capacity and hit rate as performance signals, remote manifest commit as durability evidence, and a restore test as separate proof.
+The template ID can select an ext4 image whose header advertises a 50 GiB logical device even though the Pod requested no Kubernetes storage capacity. Logical size comes from that image format. Physical node usage can remain sparse because only fetched and changed blocks occupy cache files.
+
+#### Follow an object-backed inline volume into the container
+
+Suppose a privileged node DaemonSet implements the CSI node service and an NBD backend. Each eligible node gets one daemon instance before any workspace is mounted there.
+
+```text
+Pod inline CSI attributes
+  -> kubelet calls NodePublishVolume
+  -> node-local CSI DaemonSet reads immutable template header
+  -> Go backend connects a free /dev/nbdN
+  -> host mounts /dev/nbdN as ext4 at /mnt/workspaces/volume-ID
+  -> driver bind-mounts that tree at kubelet's publish target
+  -> container runtime exposes it at /workspace
+```
+
+NBD means Network Block Device. The Linux kernel presents `/dev/nbdN` as a block device but forwards READ, WRITE, and FLUSH commands to userspace. The backend can be local; it need not send NBD protocol traffic across the VPC. A Go dispatcher is one userspace request loop translating logical block commands into cache and object-store operations. It has nothing to do with scheduling Pods or dispatching agent work.
+
+The two mounts have different jobs. The ext4 mount interprets raw device blocks as a filesystem and makes its directories, inodes, and files visible at a host path. The bind mount aliases that already-mounted tree at kubelet's target. It copies no bytes and creates no second filesystem.
+
+#### Keep every storage identity separate
+
+| Identity or mapping                   | Owner and purpose                                                                                           |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Template build ID                     | Pod attribute selecting an immutable base header and its object-store data                                  |
+| Generated inline volume ID            | Kubelet currently hashes Pod UID plus volume name; the node plugin must consume the result as an opaque key |
+| Optional Pod fields in volume context | Supplied only when `podInfoOnMount` is true; useful routing context but not proof of caller identity        |
+| CSI volume ID inside the node daemon  | Keys the NBD device, private cache, host mount, and current in-memory state                                 |
+| Header logical range                  | Maps logical block addresses to an immutable object ID and byte offset                                      |
+| Stable run or conversation ID         | Application identity that must point to the latest header if another Pod must resume it                     |
+
+The pathname is not an object-store patch key. A lookup such as `/workspace/src/app.py` passes through ext4 directory entries, an inode, and extents to logical block numbers. The blockstore maps those numbers to a private changed block or an immutable object range. Object storage never edits `src/app.py` by name.
+
+The application database may map a stable run to the current sandbox or Pod name. Kubernetes records the resulting Pod UID. Kubelet derives the inline volume ID, and the node plugin uses that ID to select the NBD device, mount, and caches. Those mappings solve live routing. Cross-Pod filesystem recovery still needs a durable stable-run-to-latest-header mapping.
+
+#### “Warm” and “cache” name several different states
+
+| State                          | Location and population path                                                    | Sharing boundary                                   |
+| ------------------------------ | ------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Prebaked filesystem content    | Dependency trees, generated files, tools, and datasets written before S3 upload | Every volume using that immutable template         |
+| Node-shared clean read cache   | Sparse node file filled lazily from object-store range reads                    | Mounts on one node using the exact immutable build |
+| Per-volume private write cache | Sparse node file filled by one workspace's NBD writes plus a dirty-block bitmap | One CSI volume only                                |
+| Linux page cache               | RAM pages populated above ext4 by file reads and writes                         | Kernel and mount rules on that node                |
+| CI, registry, and image cache  | BuildKit layers, registry objects, or container-runtime image layers            | Build system or node image path, not workspace I/O |
+
+A warm Pod is ready idle execution capacity. A prebaked template already contains expensive development state. A warm node cache has fetched popular clean blocks. They reduce different delays and can exist independently.
+
+Sharing clean blocks is safe only because the cache key includes immutable build or object identity. Writes go to the volume's private cache and dirty bitmap, so two workspaces can read the same base without seeing each other's changes.
+
+A concrete tuning profile keeps the shared clean cache on the node's `gp3` root disk, fills it lazily, and protects active entries with leases. It expires idle entries after six hours and evicts least-recently-used idle entries above a 30 GiB high watermark until usage reaches a 20 GiB low watermark. Daemon startup clears its shared clean read-cache files because completed-range state exists only in daemon memory; later reads refill them from object storage.
+
+The virtual device uses 4 KiB logical blocks and four NBD socket connections per mounted volume; the connections allow independent I/O to proceed concurrently. A cached-device layer coalesces 4 KiB misses into 4 MiB read-cache chunks and fetches those chunks in 512 KiB object-range batches. That avoids issuing roughly one S3 range request for every missing 4 KiB block. These values are implementation tuning rather than CSI semantics.
+
+#### Read, write, checkpoint, and resume are different paths
+
+```text
+read:
+container pathname
+  -> ext4 and page-cache lookup
+  -> NBD READ on page-cache miss
+  -> private changed block, else shared clean cache
+  -> header lookup and object-store range read on cache miss
+
+write:
+container write
+  -> Linux page cache and ext4 allocation
+  -> NBD WRITE for logical blocks
+  -> private sparse cache + dirty bitmap
+  -> no edit to the immutable base or prior object
+
+checkpoint:
+syncfs pushes ext4 dirty pages through NBD WRITE
+  -> pack selected dirty logical blocks into a new immutable diff object
+  -> upload a cumulative header that directly maps every logical range
+     to an immutable object UUID and byte offset
+  -> periodic path: advance only the daemon's in-memory mountState.hdr
+  -> final unmount: quiesce ext4 and NBD
+     -> when dirty blocks exist, upload the generation
+     -> record <volume-ID>.latest for that volume on that node
+```
+
+The completion point decides the failure behavior. A normal file write can be acknowledged after bytes enter the page cache. `fsync` asks ext4 and the block driver to honor their flush contract. In this reference design, the NBD connection does not advertise `SEND_FLUSH`; if a FLUSH command arrives anyway, its handler acknowledges without syncing the mmap-backed private cache to host media or S3. The checkpoint path calls `syncfs` so ext4 emits dirty blocks through NBD writes, but only a completed diff and header upload proves S3 durability.
+
+The header is flattened rather than a linked list of prior headers. A reader loads one header and resolves every logical range directly to an object UUID and offset instead of chasing a checkpoint chain. Older data objects remain dependencies of the new header, so flattening lookup metadata does not compact or copy all underlying data.
+
+Periodic checkpointing uploads a generation and advances only `mountState.hdr` in daemon memory. Final unmount quiesces ext4 and NBD, uploads a final generation when dirty blocks exist, and writes a volume-ID-scoped `.latest` record on that node. The current clean-unmount edge is unsafe: export can skip the upload when the dirty count is zero while unmount still writes a freshly generated UUID into `.latest`, leaving a pointer to an object that was never created. Treat that as a code defect, not a recovery guarantee.
+
+Even on the normal dirty path, neither checkpointing nor unmount publishes a durable run-or-session-to-header head that a new Pod with a different volume ID can discover. If the implementation keeps a cumulative dirty bitmap, later checkpoints may also re-upload blocks included in an earlier checkpoint.
+
+Durable objects still do not prove workspace resumability. If the latest header exists only in daemon memory or a node-local pointer keyed by the old volume ID, a replacement Pod with a new UID and volume ID starts from the original template. A stable run or session needs a durable, versioned head that another node can discover. [HE5: Durable state, continuity, and handoffs](../05-harness-engineering/05-durable-state-continuity-and-handoffs.md#a-stored-snapshot-is-not-yet-a-recovery-point) derives that publication protocol.
+
+Transcript resume and filesystem resume are independent. Restoring model messages does not restore unpushed files. Until the platform publishes a cross-Pod filesystem head, push source changes to a remote repository or publish another external artifact before treating them as durable output.
+
+Kubernetes can report that a volume is published and mounted; those facts do not prove its flush, snapshot, consistency, or recovery semantics. Read the exact driver contract before using it for write-sensitive state. Treat cache hit rate and occupancy as performance evidence, remote checkpoint publication as durability evidence, and a replacement-node restore test as recovery proof.
 
 ## Security needs independent gates
 
@@ -225,7 +360,9 @@ None replaces the others. A Pod may lack permission to list Secrets yet still re
 
 Begin inside a disposable diagnostic Pod in the same namespace and policy context as the caller. Resolve the Service name and record the returned ClusterIP. Inspect the Service ports and selector, then list its EndpointSlices. No endpoints means the problem is usually selector match, Pod readiness, or endpoint ownership. Ready endpoints shift the next questions to NetworkPolicy, CNI routing, Service data-path programming, and whether the application listens on the declared target port and Pod address.
 
-For external traffic, inspect Gateway and route status conditions before the cloud load balancer. A route can exist but be unattached because its parent reference, hostname, namespace permission, or controller support is wrong. For storage, follow PVC phase to StorageClass, selected or bound PV, scheduling events, CSI controller operation, node attachment, and mount event. A Pod waiting on a volume in another zone is a topology problem; an attached volume that fails to mount may be a node plugin, filesystem, permission, or stale-attachment problem.
+For external traffic, inspect Gateway and route status conditions before the cloud load balancer. A route can exist but be unattached because its parent reference, hostname, namespace permission, or controller support is wrong. For provisioned storage, follow PVC phase to StorageClass, selected or bound PV, scheduling events, CSI controller provisioning and attachment, then node staging and publishing. A Pod waiting on a volume in another zone is a topology problem; an attached volume that fails to publish may be a node plugin, filesystem, permission, or stale-attachment problem.
+
+For inline CSI, start with the Pod's inline attributes and the `CSIDriver` object. Confirm that `Ephemeral` is advertised, then inspect `CSINode` for the selected node to prove that this driver registered there. Inspect the node DaemonSet and its registrar, then follow the kubelet event and `NodePublishVolume` log. For the object-backed design above, continue through `/dev/nbdN`, the host ext4 mount, the bind target, the private and shared caches, the active header, and the S3 objects. There is no PVC or controller attach to inspect on this path.
 
 > **Policy check.** NetworkPolicy rules are additive for a selected Pod. Test both egress from the caller and ingress to the destination, and confirm the installed provider implements the policy types in use.
 
@@ -236,6 +373,9 @@ kubectl get gateway,httproute,service,endpointslice,networkpolicy,pod
 kubectl describe service <name>
 kubectl describe pod <name>
 kubectl get pvc,pv,storageclass
+kubectl get csidriver
+kubectl get csinode <selected-node> -o yaml
+kubectl get daemonset -n kube-system
 kubectl get events --sort-by=.metadata.creationTimestamp
 ```
 
@@ -244,17 +384,19 @@ kubectl get events --sort-by=.metadata.creationTimestamp
 Kubernetes networking, storage, and security objects are requests to controllers and node plugins. Debugging starts by identifying the component that watches each object and the concrete route, mount, or policy state it was expected to create.
 
 - CNI creates Pod interfaces, addresses, and routes; CoreDNS resolves names; EndpointSlices list ready Service backends; kube-proxy or an alternative programs the Service data path.
+- In chained networking, the VPC CNI can own Pod interfaces and addresses while Cilium attaches eBPF policy and visibility. Ingress, egress, runtime, Kubernetes API, AWS API, and application authorization remain separate gates.
 - A Service port is the stable client-facing port, while targetPort is the listening port on selected Pods. NodePort adds a node-facing port for the Service types that use it.
 - ClusterIP, NodePort, LoadBalancer, and ExternalName expose a Service in different ways. Gateway and Ingress add protocol-aware routing in front of that stable backend contract.
 - An internal NLB gives callers elsewhere in the VPC a stable private entry point. The AWS Load Balancer Controller converts the Service into listeners, target groups, health checks, and changing Pod registrations.
 - EndpointSlice is the current backend-discovery API. The older Endpoints API is deprecated and can truncate a set larger than 1,000 endpoints.
 - Trace service traffic in order: DNS → Service ports and selector → EndpointSlices → network policy → route or proxy rules → target listener. No endpoints usually means selector or readiness, not packet routing.
 - L4 load balancing chooses with connection metadata. L7 proxying terminates protocol state and adds a separate upstream connection, HTTP routing, timeouts, buffering, and retry behavior.
-- A PVC requests capacity, access mode, and a StorageClass; a provisioner supplies a PV; CSI node components attach and mount it. WaitForFirstConsumer helps align zone-bound storage with Pod placement.
-- CSI does not dictate the storage backend. For an object-backed virtual block device, distinguish disposable node cache from durable chunks and the committed volume manifest, then verify flush, fencing, and recovery behavior.
+- A PVC requests capacity, access mode, and a StorageClass. A provisioner supplies a volume and PV, a CSI controller may attach it, and the node plugin may stage it before publishing it. WaitForFirstConsumer helps align zone-bound storage with Pod placement.
+- CSI does not dictate the storage backend or require PVC provisioning. An inline node-only driver can map a template ID through NBD, a host ext4 mount, and a bind mount while keeping clean shared reads and private writes in separate caches.
+- An immutable diff and header in object storage become cross-Pod workspace state only when a durable head keyed by stable run identity lets another node discover them. Transcript resume is a different contract.
 - Persistence does not imply backup, restore, or safe concurrent access. Reclaim policy and backend durability must match the application's recovery plan.
 - RBAC, workload identity, Pod Security Admission, secret controls, and NetworkPolicy guard different operations. Passing one gate says nothing about the others.
-- For an external failure, inspect Gateway or route attachment before the cloud load balancer. For a volume failure, follow PVC → StorageClass → PV → scheduling → attach → mount events.
+- For an external failure, inspect Gateway or route attachment before the cloud load balancer. For a provisioned volume failure, follow PVC → StorageClass → PV → scheduling → attach → node publish. For an inline failure, follow Pod attributes → `CSIDriver` → selected-node `CSINode` registration → node plugin → device and mounts.
 
 ## References
 
@@ -263,11 +405,14 @@ Kubernetes networking, storage, and security objects are requests to controllers
 - [Gateway API concepts](https://gateway-api.sigs.k8s.io/docs/concepts/api-overview/)
 - [Persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
 - [Kubernetes volumes and CSI operations](https://kubernetes.io/docs/concepts/storage/volumes/#csi)
+- [Kubernetes CSI ephemeral volumes](https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#csi-ephemeral-volumes)
 - [Deploying a CSI driver: controller and node components](https://kubernetes-csi.github.io/docs/deploying.html)
 - [Using RBAC authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
 - [Kubernetes NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
 - [Kubernetes Service debugging](https://kubernetes.io/docs/tasks/debug/debug-application/debug-service/)
 - [Amazon VPC CNI concepts](https://docs.aws.amazon.com/eks/latest/userguide/managing-vpc-cni.html)
+- [Cilium chaining with the AWS VPC CNI](https://docs.cilium.io/en/stable/installation/cni-chaining-aws-cni/)
+- [Cilium Hubble](https://docs.cilium.io/en/stable/observability/hubble/)
 - [AWS Load Balancer Controller: Network Load Balancer](https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/guide/service/nlb/)
 - [Amazon EKS: Route TCP and UDP traffic with Network Load Balancers](https://docs.aws.amazon.com/eks/latest/userguide/network-load-balancing.html)
 - [Kubernetes NodeLocal DNSCache](https://kubernetes.io/docs/tasks/administer-cluster/nodelocaldns/)

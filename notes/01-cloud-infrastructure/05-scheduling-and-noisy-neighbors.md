@@ -71,6 +71,25 @@ The Horizontal Pod Autoscaler changes a workload's desired replica count from me
 
 Every loop needs a metric, target, sampling interval, delay, minimum and maximum, and stop condition. CPU can fit a compute-bound request handler. Queue age or drain time often fits workers better because a deep queue with cheap handlers and a shallow queue with expensive handlers need different responses. Scaling also stops at downstream limits: database connections, API quotas, Pod IP addresses, or Kafka partition concurrency can become the actual ceiling.
 
+### Not every placement or disruption control is a scaler
+
+| Mechanism                | What it changes                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| Deployment replica count | A fixed desired Pod count written by a person or controller                                       |
+| HPA                      | Workload replica demand from resource, custom, or external metrics                                |
+| KEDA                     | Event-driven activation and replica demand, commonly by managing an HPA                           |
+| VPA                      | CPU and memory requests or recommendations, not the number of replicas                            |
+| Cluster Autoscaler       | Desired size of predeclared node groups                                                           |
+| Karpenter                | Concrete nodes selected from pending-Pod constraints and provider supply                          |
+| Scheduler profile        | Which existing feasible node receives a Pod                                                       |
+| PodDisruptionBudget      | How many matching Pods a supported voluntary eviction may make unavailable                        |
+| Affinity and spread      | Which placements are feasible or preferred                                                        |
+| DaemonSet                | One Pod per eligible node; its count follows node supply rather than an application demand metric |
+
+These controls form a sequence. An HPA or KEDA may raise the replica count. The scheduler may leave the new Pods Pending. Karpenter or Cluster Autoscaler may then add nodes, after which the scheduler tries again. Required anti-affinity can make every current node infeasible, and a disruption budget can block voluntary scale-down, but neither creates capacity.
+
+A VPA that raises requests can make existing Pods unschedulable after restart. Karpenter can add suitable nodes only if the NodePool permits their shape and the provider has quota, subnet addresses, and available instances. Draw each loop with its input, output, delay, and maximum before expecting “autoscaling” to solve the whole path.
+
 ## Reservations set the fit even when dashboards look empty
 
 Assume each node has 4 vCPU and 16 GiB of allocatable memory after system reservation. A worker Pod requests 1.5 vCPU and 5 GiB. Two workers fit because they reserve 3 vCPU and 10 GiB. A third would request 4.5 vCPU and fail the CPU filter even though memory would remain. If the first two workers happen to use only 200 millicores each, the scheduler still sees their 3 vCPU of requests; observed idleness does not rewrite the reservation.
@@ -243,7 +262,7 @@ Scheduling and runtime resource control use different inputs. The scheduler admi
 - CPU requests influence entitlement under contention, while CPU limits can throttle. Memory requests guide placement, while crossing a memory limit can end the container.
 - HPA CPU utilization divides observed use by the request, not the limit. Missing requests and stale external metrics can therefore block or distort scaling.
 - Affinity, taints, volume topology, host ports, and topology spread all reduce the feasible set. Spread serving replicas across failure domains; pack delay-tolerant work when freeing whole nodes matters.
-- HPA changes desired Pod count; node autoscaling changes supply. Neither can satisfy an impossible selector, topology rule, quota, or hardware constraint.
+- HPA and KEDA change replica demand; VPA changes resource requests; Cluster Autoscaler and Karpenter change node supply. Scheduler profiles, PDBs, affinity, and spread affect placement or disruption but do not create capacity.
 - For Pending Pods, start with scheduler events and node labels, taints, allocatable capacity, claims, and quotas. For running Pods, compare throttling, working set, OOM reasons, pressure, and latency by node.
 - Reserve capacity for system daemons, rollout surge, failed-node recovery, and startup lag. Apparent idle CPU does not reclaim an oversized request.
 - Pending is a Pod lifecycle phase, not a scheduler queue. ActiveQ, BackoffQ, and the unschedulable Pod pool describe scheduling attempts; QueueingHint moves only attempts that a relevant cluster change may unblock.
@@ -265,6 +284,8 @@ Scheduling and runtime resource control use different inputs. The scheduler admi
 - [Resource management for Pods and containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
 - [Kubernetes resource units](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-units-in-kubernetes)
 - [Horizontal Pod Autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/)
+- [Kubernetes Vertical Pod Autoscaler](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler)
+- [KEDA concepts](https://keda.sh/docs/latest/concepts/)
 - [Assigning Pods to nodes](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/)
 - [Taints and tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
 - [Pod topology spread constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/)

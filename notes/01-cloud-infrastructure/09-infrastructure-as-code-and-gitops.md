@@ -36,6 +36,21 @@ The change tools in this note solve different pieces:
 
 A tool does not supply the operating policy. Someone still decides who may approve a deletion, how state is recovered, which drift is repaired automatically, and what service evidence blocks promotion.
 
+### “Committed” names different boundaries
+
+| Phrase                 | What became authoritative or addressable                                 | What still has not happened                                               |
+| ---------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| Local Git commit       | A repository snapshot exists in one local object database                | The shared remote branch has not received it                              |
+| Git push or merge      | The shared remote has the history, or a reviewed branch now points to it | A GitOps controller and workload rollout may not have applied it          |
+| Database commit        | One transaction became visible and durable under the database contract   | Another system did not join that transaction automatically                |
+| External-effect commit | The target system accepted an operation                                  | The caller may still be uncertain if its response was lost                |
+| Object upload          | Bytes exist under an object key or version                               | They are not the current checkpoint until a durable head references them  |
+| Registry image push    | Image bytes are retrievable by an immutable digest                       | No cluster has deployed that digest                                       |
+| GitOps commit          | Versioned desired state changed in Git                                   | Reconciliation, rollout, and service acceptance remain later transitions  |
+| Filesystem flush       | Dirty data crossed the filesystem's declared storage boundary            | It did not create a Git commit or necessarily publish a remote checkpoint |
+
+Use the full phrase when boundaries can be confused. “The change committed” is incomplete in a system that has a database, Git repository, object store, image registry, and GitOps controller.
+
 ## Plans predict; reconcilers apply and keep checking
 
 Terraform compares configuration, recorded state, and provider observations to produce a plan. Review the plan as a proposed state transition, including replacements and deletions; plan files can contain sensitive values and don't belong in Git. Apply changes through a controlled workflow rather than an engineer's laptop session.
@@ -141,6 +156,44 @@ immutable artifact digest: build once → staging → production
 Terraform: plan → protected review → apply → observed state
 Kubernetes: render → diff → sync → rollout → service evidence
 ```
+
+### An image updater writes desired state; it does not roll out Pods
+
+An image updater watches registry metadata and the configured update policy. After choosing a digest, it authenticates as a delivery bot and writes that digest into Git, either by commit or pull request. Argo CD later observes the changed Git revision, syncs the rendered Kubernetes object, and lets the workload controller perform the rollout.
+
+```text
+CI build
+  -> push immutable image digest to registry
+  -> image updater writes digest into Git desired state
+  -> Argo CD observes and syncs the Git revision
+  -> workload controller rolls out new Pods
+  -> service gates accept, stop, or recover
+```
+
+An agent platform commonly builds a privileged control-service image and a less-trusted runner image separately. They serve different processes, contain different dependencies, and can roll out on different schedules. Record both digests in a run's effective manifest together with its policy, tool bundle, and filesystem-template ID. A successful control-service rollout does not prove that newly created runner sandboxes use the intended image, and replacing warm runner inventory does not require changing the control service.
+
+### A filesystem-template publisher commits an identifier, not the files
+
+A sandbox template can refer to two different kinds of “base.” A Kustomize base is a set of Kubernetes manifests that an environment overlay patches. A filesystem base is an immutable ext4 image containing a checkout, dependencies, generated code, tools, or datasets. The Kubernetes custom resource does not contain those filesystem bytes. Its Pod template passes a build UUID to an inline CSI volume, and the storage driver uses that UUID to load the header and data objects from object storage.
+
+A template publication pipeline can make that connection explicit:
+
+```text
+template build job
+  -> create a sparse 50 GiB logical ext4 filesystem
+  -> write checkout, dependencies, generated code, and datasets
+  -> upload UUID-keyed rootfs.ext4 and rootfs.ext4.header objects
+  -> read the current environment overlay and its Git blob SHA
+  -> update templateBuildID through the GitHub Contents API
+     with the prior SHA as the compare condition
+  -> automation identity creates a remote Git commit
+  -> Argo CD syncs the changed desired state
+  -> changed Pod-template hash replaces idle warm sandboxes
+```
+
+The build workflow is the commit actor. The current path authenticates with a dedicated repository template-sync token and supplies the prior blob SHA, so a concurrent overlay edit causes a conflict instead of a blind overwrite. Uploading the image objects happens first; the later remote Git commit publishes which immutable UUID the environment should use. Argo CD performs the sync, and the sandbox or warm-pool controller creates replacement Pods. The CSI driver only mounts the selected bytes.
+
+This flow has several independent completion points. An S3 upload proves the objects exist. A remote Git commit changes desired state. Argo CD sync changes Kubernetes objects. A controller replacing idle inventory makes new claims use the build. None proves the next runner image changed, because the container image and filesystem template are separate artifacts.
 
 ## Worked case: promote one rendered release candidate
 
@@ -277,6 +330,9 @@ Infrastructure delivery starts with explicit ownership. Terraform records provid
 - `init`, plan, apply, import, replacement, drift repair, and state recovery solve different problems. Review their boundaries instead of using apply as a general repair command.
 - Protect remote state and saved plans, prove a lock is stale before forcing it open, and finish recovery with a plan that accounts for every proposed action.
 - Promote one verified artifact digest through environments that keep separate identities, state, secrets, networks, data, and rollback policy.
+- Name the commit boundary: local Git, remote Git, database transaction, object head, image registry, GitOps desired state, and filesystem flush are different transitions.
+- An image updater writes a selected digest into Git. Argo CD observes that revision, and a workload controller performs the later Pod rollout.
+- A filesystem-template build uploads immutable image objects, then commits their UUID into a Kubernetes overlay. The custom resource carries the reference rather than the filesystem bytes, and changed desired state replaces idle warm inventory.
 - A release record ties the source revision, artifact digest, render input and tool, destination, gates, and prior release together. Render the selected overlay before approving its effects.
 - Distinguish Argo comparison and sync, workload rollout, ready traffic, and service behavior. Each transition has a different owner and different evidence.
 - Roll back the state that actually changed. Restore Git intent for a bad application release, use the migration recovery contract after a forward-only data change, and use a reviewed Terraform plan for provider resources. Restoring state alone does not reverse remote calls.
@@ -299,6 +355,8 @@ Infrastructure delivery starts with explicit ownership. Terraform records provid
 - [Argo CD ApplicationSet](https://argo-cd.readthedocs.io/en/stable/user-guide/application-set/)
 - [Argo CD application diff](https://argo-cd.readthedocs.io/en/stable/user-guide/commands/argocd_app_diff/)
 - [Argo CD sync phases and waves](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/)
+- [Argo CD Image Updater update methods](https://argocd-image-updater.readthedocs.io/en/stable/basics/update-methods/)
+- [GitHub REST API: create or update file contents](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents)
 - [Kubernetes Kustomize task](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/)
 - [Kubernetes Deployment update, rollout status, and rollback](https://kubernetes.io/docs/tasks/run-application/update-deployment-rolling/)
 - [Helm chart format](https://helm.sh/docs/topics/charts/)

@@ -60,6 +60,59 @@ EKS access also crosses two authorization systems. An IAM principal authenticate
 
 > **Fictional case.** The bookshop EKS cluster keeps DNS, network, and observability add-ons on a small managed node group. Karpenter supplies replaceable application nodes from pending-Pod requirements. The split prevents an empty application fleet from removing the capacity needed to restore it.
 
+### Namespaces and NodePools remain inside one cluster
+
+One EKS cluster has one AWS-managed Kubernetes control plane. Namespaces inside it share the same API servers, etcd store, cluster controllers, upgrade path, and control-plane failure domain. A namespace scopes names and can scope RBAC, quotas, and network policy; it does not create another cluster, VPC, kernel, or control plane.
+
+```mermaid
+flowchart TB
+  accTitle: Two clusters versus two namespaces in one cluster
+  accDescr: The agent cluster has one managed control plane. Namespaces hold workload objects, while cluster-scoped NodePools describe possible worker supply. Karpenter creates NodeClaims and nodes, then the scheduler binds pending Pods. A separate product cluster has another control plane and workers.
+
+  subgraph Agent["Agent EKS cluster"]
+    ACP["AWS-managed control plane A"]
+    SYS["Baseline system managed node group"]
+    K["Karpenter"]
+    SCH["kube-scheduler"]
+
+    subgraph Namespaces["Namespace-scoped workload objects"]
+      STGP["staging namespace: Pods"]
+      PRODP["production namespace: Pods"]
+    end
+
+    subgraph Supply["Cluster-scoped worker supply"]
+      SNP["staging NodePool"]
+      PNP["production NodePool"]
+      SN["staging NodeClaim → EC2 node"]
+      PN["production NodeClaim → EC2 node"]
+    end
+
+    ACP --> SYS
+    ACP --> Namespaces
+    ACP --> Supply
+    STGP -->|"pending demand + placement constraints"| K
+    PRODP -->|"pending demand + placement constraints"| K
+    K --> SNP --> SN
+    K --> PNP --> PN
+    STGP --> SCH
+    PRODP --> SCH
+    SCH -->|"binds Pods"| SN
+    SCH -->|"binds Pods"| PN
+  end
+
+  subgraph Product["Product EKS cluster"]
+    PCP["AWS-managed control plane B"]
+    PWORK["separate product workers and objects"]
+    PCP --> PWORK
+  end
+```
+
+A Karpenter NodePool is cluster-scoped, not a child of a namespace. Pending Pods and NodePools are peer API objects inside the cluster. Node selectors, affinity, taints and tolerations, and admission policy connect workload demand to eligible supply. Karpenter creates NodeClaims and nodes; the scheduler performs the later Pod-to-node binding. Namespaces alone do not prevent a Pod from using a node or a privileged cluster component from seeing both environments.
+
+Three private workload subnets commonly mean one subnet in each of three Availability Zones. That gives nodes, load balancers, and other resources that select those subnets zonal placement choices and separate IP pools. A database uses them only if its DB subnet group selects them. The AWS-managed API servers and etcd use an AWS-owned multi-AZ control-plane placement that is separate from customer workload subnets, although EKS creates network interfaces in selected cluster subnets so the control plane can communicate with the VPC.
+
+Three subnets do not mean three clusters, and three is not a universal EKS requirement. A fixed system node group means baseline managed capacity that Karpenter does not create or remove. Its Auto Scaling Group can have different minimum, desired, and maximum values, such as `min=2`, `desired=2`, and `max=3`; failed or outdated instances remain replaceable. “Fixed” describes the supply mechanism and capacity floor, not immortal machines or one unchanging replica count.
+
 ## See the cluster work that a managed control plane replaces
 
 A self-managed Kubernetes control plane needs hosts and networking for API servers, an etcd quorum, controller managers, and schedulers, plus certificates, secure bootstrap, high availability, upgrades, backup, monitoring, and recovery. Worker nodes then need kubelet, a container runtime, networking, DNS, and any storage integration. Installing binaries is only the first step.
@@ -85,6 +138,27 @@ Do not install Cluster Autoscaler and Karpenter with overlapping ownership of th
 
 _The managed control plane, recovery floor, and elastic node controller have separate lifecycles._
 
+### Follow one Karpenter NodeClaim
+
+Karpenter watches unschedulable Pods and combines their requests and hard placement constraints with DaemonSet overhead. A `NodePool` defines allowed supply, labels, taints, aggregate limits, and disruption rules. A provider-specific node class defines host details such as AMI, subnet and security-group selection, storage, and instance role. Karpenter creates a `NodeClaim` for one concrete machine request, asks EC2 to launch it, and waits for the resulting Kubernetes Node to become Ready. The scheduler, not Karpenter, then binds the Pod.
+
+```text
+Pending Pod requests and constraints
+  + matching DaemonSet overhead
+  + NodePool supply policy
+  + EC2NodeClass host configuration
+  -> NodeClaim
+  -> EC2 instance
+  -> Ready Kubernetes Node
+  -> scheduler binds Pod
+```
+
+Karpenter changes node supply; it does not change a Deployment or warm pool's replica count. Scale-out can stop at NodePool limits, EC2 quota, subnet IP exhaustion, unavailable instance capacity, an impossible selector, or a host configuration that never joins successfully.
+
+Consolidation removes waste, while drift replaces nodes that no longer match current configuration. Both are voluntary disruption paths. A Pod annotation such as `karpenter.sh/do-not-disrupt: "true"` can block Karpenter from voluntarily evicting that Pod under the installed Karpenter version and policy. It does not survive hardware failure, manual deletion, direct Pod deletion, kubelet failure, or every forceful administrative action. If the NodePool or NodeClaim sets `terminationGracePeriod`, Karpenter honors Pod disruption blockers only until that deadline expires and can then remove the Pods to finish node termination.
+
+A PodDisruptionBudget protects an availability count during supported voluntary evictions. It does not promise that one particular Pod stays on one particular node. Long-lived disruption blockers can also prevent consolidation, AMI replacement, and security patch rollout, so record why each blocker exists and how it is cleared.
+
 ## EKS exposes Kubernetes, not ECS objects
 
 EKS exposes Kubernetes resources, controllers, CustomResourceDefinitions (CRDs), admission, and its extension ecosystem. An ECS task resembles a colocated process group, but treating it as a Pod hides different identity, networking, rollout, policy, and controller behavior. An ECS service and a Kubernetes Deployment both maintain replicas, yet they use different APIs, rollout controls, discovery objects, and extension points.
@@ -100,6 +174,8 @@ Fargate removes direct EC2 node administration for supported ECS tasks or EKS Po
 EKS Auto Mode extends AWS management beyond the hosted control plane. AWS manages Auto Mode nodes plus core compute autoscaling, Pod and Service networking, load balancing, cluster DNS, block storage, and selected accelerator support. The managed instances use AWS-chosen immutable images and do not allow SSH or SSM access. Auto Mode still leaves application containers, VPC design, cluster configuration, Kubernetes policy, availability, and monitoring with the customer.
 
 Fargate and Auto Mode are not interchangeable. EKS Fargate schedules each matching Pod into its own compute boundary and does not support DaemonSets, privileged containers, host networking, GPUs, alternate CNIs, or EBS mounts. Auto Mode uses managed EC2 instances and supports a broader Kubernetes data plane, but restricts host customization. Standard EKS with managed or self-managed nodes remains the choice when the host, AMI, daemon fleet, or unsupported storage and networking behavior is part of the workload contract.
+
+For example, an execution platform may require a custom AMI with a gVisor runtime handler and the Linux Network Block Device module, a privileged node storage DaemonSet, a custom CSI driver, and Cilium chained after the VPC CNI. Those requirements depend on node-image and data-plane control that Auto Mode intentionally owns. Choosing standard EC2 nodes transfers AMI builds, runtime and kernel compatibility, node patching, autoscaler operation, and drain behavior back to the platform team.
 
 Treat upgrades as a graph: control plane, managed add-ons, node images, controllers, policies, and workloads each have compatibility ranges. Test skew, capacity during rollout, Pod disruption budgets, webhook availability, and rollback signals before changing production.
 
@@ -148,9 +224,10 @@ EKS and ECS remove different parts of container-platform ownership. The useful c
 
 - An ECS task definition is a blueprint, a task is one running copy, and a service maintains desired tasks. A capacity provider chooses Fargate, managed instances, or Auto Scaling group capacity.
 - AWS operates EKS control-plane availability; the platform team still owns access, workloads, nodes or Fargate, add-ons, network design, observability, policy, upgrades, and cost.
+- Namespaces and NodePools remain inside one cluster and share its control plane. A second EKS cluster has another managed control plane; namespaces alone do not create that isolation boundary.
 - A self-managed cluster must bootstrap and operate API servers, etcd, controllers, schedulers, certificates, and a secure highly available endpoint. kubeadm assists bootstrap and upgrades but does not provision or continuously operate that whole system.
 - EKS exposes Kubernetes resources, admission, CRDs, and controllers. Similar-looking ECS tasks and Kubernetes Pods do not share the same rollout, identity, network, or extension contracts.
-- Separate cluster creation, baseline node capacity, and dynamic capacity controllers. Cluster Autoscaler and Karpenter run after the cluster exists and make supply decisions from Kubernetes and provider state.
+- Separate cluster creation, baseline node capacity, and dynamic capacity controllers. Karpenter combines pending-Pod constraints, DaemonSet overhead, NodePool policy, and provider node-class settings into a NodeClaim for one machine.
 - Fargate removes host administration for each supported task or Pod. EKS Auto Mode manages a broader EC2-backed data plane. Standard EC2 nodes retain host control and add image, kernel, drain, patch, and replacement work.
 - Human cluster access and workload AWS access are separate: EKS access entries map IAM principals to Kubernetes permissions, while Pod Identity or roles for service accounts supply short-lived AWS credentials to Pods.
 - CNI, DNS, Service proxying, CSI, webhooks, and autoscalers each have independent versions, permissions, health signals, and rollback plans.
@@ -179,3 +256,5 @@ EKS and ECS remove different parts of container-platform ownership. The useful c
 - [Karpenter concepts](https://karpenter.sh/docs/concepts/)
 - [Kubernetes Cluster Autoscaler](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler)
 - [Karpenter NodePools](https://karpenter.sh/docs/concepts/nodepools/)
+- [Karpenter NodeClaims](https://karpenter.sh/docs/concepts/nodeclaims/)
+- [Karpenter disruption](https://karpenter.sh/docs/concepts/disruption/)

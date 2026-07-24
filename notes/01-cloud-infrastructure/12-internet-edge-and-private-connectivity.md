@@ -190,6 +190,32 @@ VPC endpoints keep selected service traffic away from a general internet egress 
 
 Endpoint policy, service resource policy, IAM identity policy, and security groups answer different authorization questions. An endpoint policy can limit which principals use a path to an AWS service, but it doesn't grant an action that the service's own authorization denies.
 
+## VPC Link connects API Gateway to a private integration
+
+API Gateway is an AWS-managed service outside the application's VPC. A VPC Link is an API Gateway integration resource that gives selected routes a managed private path to supported resources inside a VPC, such as an internal load balancer or service-discovery target. The supported backend shapes differ between API Gateway REST APIs and HTTP APIs, so pin the API type and its integration contract.
+
+```text
+client
+  -> public API Gateway endpoint
+  -> route, authentication, authorization, and throttling
+  -> VPC Link managed private path
+  -> internal NLB or ALB
+  -> private service targets
+```
+
+The client-facing API can remain public while the gateway-to-backend leg stays private. Security groups, subnets, load-balancer health, listener configuration, backend authentication, timeouts, and retries still apply. VPC Link acceptance proves only that API Gateway can attempt the private integration.
+
+VPC Link is not a general tunnel or a Kubernetes Service:
+
+| Mechanism                      | Scope                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| API Gateway VPC Link           | Private transport for selected API Gateway integrations                                     |
+| PrivateLink                    | Publishes a service or resource to consumers through private endpoints                      |
+| VPC peering or Transit Gateway | Broader routed reachability between network address spaces                                  |
+| ClusterIP                      | Stable virtual destination for callers already using the Kubernetes cluster network and DNS |
+
+An external webhook can take another path: API Gateway invokes a verifier function, the function validates the provider signature, and its VPC network interface calls the internal load balancer. That Lambda integration does not become a VPC Link merely because both paths reach the same private backend.
+
 ## PrivateLink publishes a service without joining two networks
 
 In the original endpoint-service model, a provider places a Network Load Balancer in front of its service and grants selected AWS principals permission to create interface endpoints. The consumer chooses subnets and security groups for endpoint network interfaces. Private DNS can map the provider's name to those private interface addresses.
@@ -440,6 +466,7 @@ Internet and private-service paths work because multiple independent contracts a
 - A stub asks a recursive resolver; the recursive resolver uses cache or follows referrals to authoritative data. Positive TTLs delay record changes, and SOA-derived negative TTLs delay recovery from a missing name.
 - Route 53 routing and health checks choose DNS answers, not individual requests. DNSSEC authenticates signed data through a parent chain of trust but doesn't encrypt queries or test the application.
 - IPv4 NAT, IPv6 egress-only gateways, gateway endpoints, interface endpoints, and PrivateLink solve different egress or service-publication paths. Security groups are stateful interface policy; network ACLs are stateless subnet policy.
+- API Gateway VPC Link gives selected gateway routes a managed private integration path. It is not general VPC routing, PrivateLink service publication, or a Kubernetes ClusterIP.
 - PrivateLink publishes a narrow consumer-initiated service path. Transit Gateway joins routed networks, Site-to-Site VPN adds IPsec tunnels, and Direct Connect provides private connection capacity without default end-to-end encryption.
 - TCP, QUIC, TLS, and mTLS own different guarantees. Record every termination point and rotate private trust with an overlap period before removing the old issuer.
 - ALB routes HTTP, NLB distributes transport flows, and GWLB inserts network appliances. Cross-zone settings, health thresholds, DNS cache time, draining, and fail-open behavior determine what a zonal failure does to real clients.
@@ -476,6 +503,8 @@ Internet and private-service paths work because multiple independent contracts a
 - [IPv6 egress-only internet gateways](https://docs.aws.amazon.com/vpc/latest/userguide/egress-only-internet-gateway.html)
 - [Gateway endpoints for S3 and DynamoDB](https://docs.aws.amazon.com/vpc/latest/privatelink/gateway-endpoints.html)
 - [AWS PrivateLink concepts and endpoint types](https://docs.aws.amazon.com/vpc/latest/privatelink/concepts.html)
+- [API Gateway HTTP API VPC links](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-vpc-links.html)
+- [API Gateway REST API private integrations](https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-private-integration.html)
 - [How Transit Gateway routes and propagates prefixes](https://docs.aws.amazon.com/vpc/latest/tgw/how-transit-gateways-work.html)
 - [AWS Site-to-Site VPN concepts and two-tunnel contract](https://docs.aws.amazon.com/vpn/latest/s2svpn/VPC_VPN.html)
 - [Direct Connect dedicated and hosted connections](https://docs.aws.amazon.com/directconnect/latest/UserGuide/WorkingWithConnections.html)

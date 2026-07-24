@@ -52,6 +52,45 @@ If the worker dies before step 2, the local file was never durable. A death afte
 
 Content-addressed objects make repeated uploads harmless when the bytes match, but mutable path names still need compare-and-set or one declared writer. Cache eviction should change latency, not visible content. Track cache hit rate, downloaded bytes, upload and manifest latency, digest failures, unreferenced objects, and recovery reads separately so a warm cache cannot hide a broken remote store.
 
+### A stored snapshot is not yet a recovery point
+
+A snapshot object can survive node loss while the workflow still restarts from scratch. Recovery also needs a durable head that another worker can discover from a stable run or session ID, plus a bootstrap path that knows how to open the referenced format.
+
+Suppose a sandbox mounts immutable block image `B0` and records changed blocks in a private copy-on-write file. Every five minutes it uploads packed diff `D7` and mapping header `H7`; the header says which logical ranges come from `B0` and which come from `D7`. The daemon then remembers `H7` only in process memory.
+
+```text
+object store: B0, D7, H7
+workflow record: no snapshot head
+node dies
+replacement worker -> knows only B0 -> starts from the original image
+```
+
+The bytes survived, but no control-plane record connects them to the run. A host-local pointer or a key derived from the old worker's volume ID has the same defect because a replacement may start on another node with a new volume identity.
+
+A usable recovery point needs an explicit publication protocol:
+
+1. Establish the required consistency boundary. Flush or quiesce the filesystem, and use the database's own backup protocol when crash recovery alone is insufficient.
+2. Upload immutable data and mapping objects with checksums. Do not overwrite a published generation in place.
+3. Compare-and-set a small durable head from the prior generation to the new header ID, keyed by the stable run or session ID.
+4. Record the head version, snapshot schema, compatible reader version, and publication receipt in the workflow checkpoint.
+5. Before deleting older objects, prove that a replacement with an empty local cache can resolve the head, fetch every dependency, and open the filesystem.
+
+```text
+run manifest --compare-and-set--> H7
+                                 ├── changed ranges -> D7
+                                 └── unchanged ranges -> B0
+
+replacement worker -> run manifest -> H7 -> D7 + B0
+```
+
+A crash before step 3 leaves uploaded but unreferenced objects. Garbage collection may remove them after a safety interval. A crash after step 3 leaves a recoverable generation even if the workflow checkpoint has not yet advanced; the replacement reconciles the manifest before publishing another head.
+
+Retention must follow references. Expiring `B0` breaks `H7` even when both `H7` and `D7` still exist, while deleting an intermediate diff can break every later header that maps ranges to it. Start from each retained head, mark every reachable header and data object, then delete only unreferenced generations after the recovery window.
+
+Snapshot consistency remains a separate contract. Flushing a mounted filesystem and copying changed blocks while writes continue may produce a crash-consistent image that needs journal replay. It does not create an application-consistent database checkpoint. If the resumed worker needs a stronger promise, coordinate the application before publishing the storage head.
+
+Use one replacement test as the acceptance criterion: given only a stable run ID on another node with an empty cache, can a new worker discover the current head, validate its dependencies, open it with a compatible reader, and identify the next safe workflow action? If not, the uploaded bytes are an artifact rather than a resumable checkpoint.
+
 ## Persist a boundary another process can verify
 
 A checkpoint needs a workflow and task identity, schema version, owner or lease epoch, current phase, input references, completed step records, artifact digests, external-effect receipts, pending approvals, remaining budgets, and an explicit next safe action. Store it atomically or use a versioned compare-and-set so two executors cannot both advance the same state without detection.

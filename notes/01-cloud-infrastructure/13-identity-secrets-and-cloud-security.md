@@ -222,6 +222,24 @@ These AWS services have different jobs:
 
 Do not put a secret in an image, Git history, environment-wide debug dump, command line, metric label, or unprotected trace. Environment variables are easy to inject but can be copied into process dumps, child processes, support bundles, and accidental logs. A mounted in-memory file can narrow some exposure but still needs filesystem permissions, refresh signaling, and cleanup.
 
+### A Secrets Manager secret is not a compute container
+
+A Secrets Manager secret is a named resource with an ARN, resource policy, KMS configuration, tags, recovery behavior, and one or more versions. The versions contain the actual secret values and can carry staging labels such as `AWSCURRENT` and `AWSPREVIOUS`. Calling the stable resource a “container for versions” describes grouping only; it has nothing to do with an OCI or Kubernetes container and starts no process.
+
+One version may contain a JSON object with several related fields. `GetSecretValue` returns the complete selected version, so IAM does not authorize individual JSON keys independently. Bundle values only when their readers, classification, and rotation lifecycle match. Put credentials with different readers or rotation schedules in separate secret resources.
+
+An IRSA-backed Pod follows this path:
+
+```text
+Kubernetes service-account token
+  -> STS role session
+  -> secretsmanager:GetSecretValue on one allowed ARN
+  -> complete selected secret version
+  -> application parses the JSON in its own process
+```
+
+No sidecar is required. A broker or CSI secret-store driver can be added for another delivery contract, but it is a separate component rather than part of Secrets Manager itself.
+
 ## Secret rotation is a compatibility protocol
 
 Changing a value in Secrets Manager does not prove that clients, servers, pools, replicas, and recovery systems changed together. A database password rotation often needs overlapping validity:
@@ -394,6 +412,7 @@ An AWS request is authorized from an authenticated principal, exact action, reso
 - IRSA and EKS Pod Identity bridge Kubernetes service accounts to temporary AWS credentials through different mechanisms. Neither turns a compromised node into a trusted boundary.
 - Credential-provider precedence can select the wrong principal. Record caller identity and source category without recording credentials.
 - Secrets Manager and Parameter Store hold application-readable values. KMS authorizes cryptographic operations and commonly wraps data keys through envelope encryption.
+- A Secrets Manager resource groups secret versions but is not a compute container. One JSON version is returned as a unit, so split values that need different readers or rotation schedules.
 - Secret rotation is an overlap, refresh, drain, revoke, and verification protocol. Fleet size and pool lifetime determine its safe window and load.
 - KMS rotation changes key material for new encryption but does not rewrite old data or revoke access. Key deletion requires an inventory of every recovery copy.
 - Network reachability, TLS, IAM authorization, KMS permission, and product authorization are independent checks.

@@ -64,6 +64,24 @@ physical SSDs or HDDs / cloud block volumes
 
 A partition describes a bounded range of sectors on a lower block device. Device-mapper creates a new virtual block device by mapping its logical sectors to one or more lower devices; LVM is a userspace volume manager that commonly builds logical volumes through device-mapper. Each layer adds its own identity, metadata, limits, queueing, flush behavior, monitoring, and recovery path. `lsblk`, `findmnt`, `/sys/dev/block`, `dmsetup ls --tree`, `lvs`, and `/proc/mdstat` reveal different parts of the graph.
 
+### NBD lets userspace implement a block device
+
+The Linux Network Block Device (NBD) driver exposes devices such as `/dev/nbd7` while forwarding block requests to a userspace process. The backend may contact a remote server, but the word “network” does not require that. A local daemon can receive NBD commands over a Unix socket and satisfy them from files, caches, or an object store.
+
+```text
+application file read
+  -> VFS and ext4
+  -> logical block read on /dev/nbd7
+  -> kernel NBD driver
+  -> Unix socket
+  -> userspace dispatcher
+  -> private cache, shared cache, or object-store range read
+```
+
+A Go NBD dispatcher is the request loop that decodes commands such as READ, WRITE, and FLUSH, checks ranges, performs the backend operation, and sends a completion. It is unrelated to a Kubernetes scheduler or application-work dispatcher. Several socket connections may serve one device so independent block requests can proceed concurrently.
+
+The filesystem still belongs above NBD. ext4 interprets the virtual device's raw blocks as directories, inodes, extents, data, and journal records. If the userspace backend dies or loses its device connection, the mounted filesystem can receive I/O errors even though the mount point remains visible. Monitor the NBD device, daemon, cache, object store, filesystem, and application as separate layers.
+
 ### RAID trades capacity and write work for a failure model
 
 RAID combines devices below the filesystem. It can preserve availability through selected device failures, but it does not undo deletion, repair application corruption, stop ransomware, preserve an older logical version, or survive every controller, software, rack, or site failure. State the layout and the exact failures it tolerates instead of saying only “the disk is redundant.”
@@ -145,6 +163,21 @@ Use namei -l or stat to inspect components, findmnt -T to identify the covering 
 Shared, private, slave, and unbindable propagation control whether mount and unmount events cross peer boundaries. Inspect propagation before assuming a host mount should appear inside a container.
 
 [Linux man-pages: mount_namespaces(7)](https://www.man7.org/linux/man-pages/man7/mount_namespaces.7.html)
+
+### A filesystem mount and a bind mount do different jobs
+
+A filesystem mount attaches a filesystem implementation to a directory. For example, mounting `/dev/nbd7` as ext4 at `/mnt/workspaces/volume-42` makes the device's ext4 directory tree visible there.
+
+A bind mount exposes an existing mounted file or directory tree at another pathname. Binding `/mnt/workspaces/volume-42` to a kubelet publish target does not copy the bytes, format another filesystem, or create a second set of files. Both paths reach the same mounted objects while namespace, propagation, and mount flags decide which processes can see and modify them.
+
+```text
+/dev/nbd7
+  -> ext4 filesystem mount at /mnt/workspaces/volume-42
+  -> bind mount at kubelet's CSI target
+  -> container mount path
+```
+
+This two-step pattern lets a node storage daemon own one real filesystem mount while kubelet and the container runtime publish the already-mounted tree into a Pod's mount namespace.
 
 ## Direct, buffered, and mapped I/O pay different costs
 
@@ -243,11 +276,13 @@ Storage APIs expose different completion points across the page cache, filesyste
 - A block device supplies addressed blocks and queues; a filesystem supplies names, permissions, allocation, and recovery rules; VFS presents a common file API.
 - An SSD is media plus a controller, NVMe is a host-controller protocol, an NVMe namespace is a logical block-address space, and a Linux block device is the generic interface exposed upward. None of those words alone proves physical isolation or durability.
 - Trace the real device graph: physical or cloud device → controller-facing block device → optional RAID → partition → device-mapper or LVM → filesystem → application. Alternate compositions exist, so inspect mappings and failure domains rather than inferring them from a path name.
+- NBD can expose a userspace-backed `/dev/nbdN`; a dispatcher serves logical block commands from local or remote storage. Backend failure can surface as filesystem I/O errors above a still-visible mount.
 - RAID 0 has no redundancy; RAID 1 mirrors; RAID 10 stripes mirrored groups; RAID 5 survives one member failure; RAID 6 survives two. Rebuild consumes surviving capacity while redundancy is reduced, and RAID does not replace an independent, restorable backup.
 - Snapshots share blocks and thin volumes allocate later. Both depend on mapping metadata and pool headroom, and neither is automatically application-consistent or independent of its origin's failure domain.
 - I/O units must balance. With 32 average outstanding 4 KiB operations and 4 ms average latency, the stable ceiling is about 8,000 IOPS and 32.768 MB/s. Deeper queues can raise throughput until saturation while worsening tail latency.
 - Volatile process memory, dirty page-cache data, filesystem-visible names, device acknowledgement, and durable media are different completion points.
 - Path lookup uses the process's root, current directory, mount namespace, and search permission on every component. A dentry maps a name to an inode; an inode does not own one permanent pathname.
+- A filesystem mount interprets a device at one directory. A bind mount republishes that existing tree at another path without copying bytes or creating another filesystem.
 - Buffered I/O uses the page cache, direct I/O adds alignment and coordination constraints, and mmap moves latency into page faults. Select from reuse, working set, record shape, and durability needs.
 - A durable same-filesystem replacement is write temp completely → fsync temp → rename → fsync containing directory. Check every return value because writeback failures can appear at fsync.
 - Each io_uring request needs stable request identity and live resources until its completion contract ends. Ordinary requests yield one CQE, multishot requests may yield several, and skip-success can suppress a successful CQE. Cancellation adds another completion and can lose a race to normal completion.
@@ -263,6 +298,7 @@ Version-sensitive NVMe and Linux block-stack documentation was reviewed on 18 Ju
 - [NVM Express: namespaces](https://nvmexpress.org/resource/nvme-namespaces/)
 - [Linux kernel: NVMe multipath and namespace block devices](https://docs.kernel.org/admin-guide/nvme-multipath.html)
 - [Linux kernel: block subsystem](https://docs.kernel.org/block/index.html)
+- [Linux kernel: Network Block Device](https://docs.kernel.org/admin-guide/blockdev/nbd.html)
 - [Linux kernel: MD RAID arrays](https://docs.kernel.org/admin-guide/md.html)
 - [Linux kernel: device-mapper](https://docs.kernel.org/admin-guide/device-mapper/index.html)
 - [Linux kernel: device-mapper RAID](https://docs.kernel.org/admin-guide/device-mapper/dm-raid.html)
@@ -270,5 +306,6 @@ Version-sensitive NVMe and Linux block-stack documentation was reviewed on 18 Ju
 - [Linux kernel: device-mapper thin provisioning](https://docs.kernel.org/admin-guide/device-mapper/thin-provisioning.html)
 - [Linux kernel: iomap operations](https://docs.kernel.org/filesystems/iomap/operations.html)
 - [Linux kernel: page cache](https://docs.kernel.org/mm/page_cache.html)
+- [Linux man-pages: mount and bind mounts](https://man7.org/linux/man-pages/man8/mount.8.html)
 - [Linux man-pages: fsync(2)](https://man7.org/linux/man-pages/man2/fsync.2.html)
 - [Linux man-pages: io_uring(7)](https://www.man7.org/linux/man-pages/man7/io_uring.7.html): Introduces SQEs, CQEs, shared ring mappings, submission, and completion handling.

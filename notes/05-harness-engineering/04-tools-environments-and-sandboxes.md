@@ -125,6 +125,22 @@ Choose the execution boundary from the workload and threat model. A user-space k
 
 > **Toy sandbox.** Give a parser-repair run one disposable workspace, read access to the checkout, write access only to `packages/parser`, no outbound network, and a 15-minute deadline. The sandbox limits damage; the host still validates each proposed tool call and checks the resulting diff.
 
+### A warm pool pre-creates idle sandboxes
+
+A cold launch waits for Pod creation, scheduling, node capacity, image availability, volume setup, application initialization, and readiness. A warm-pool controller moves that work earlier by maintaining ready but unclaimed sandboxes.
+
+```text
+desired idle count = 3
+  -> controller creates and warms 3 sandbox Pods
+  -> a claim atomically adopts 1 existing Pod
+  -> the run starts without another Pod launch
+  -> controller creates and warms 1 replacement
+```
+
+The pool size normally describes idle inventory, not idle plus active work and not a concurrency limit. “Replenish the pool” means create and warm a replacement Pod. It does not necessarily mean create a node. The scheduler uses existing capacity when possible; otherwise the replacement stays Pending and may cause a node autoscaler to add supply.
+
+Claiming should preserve the existing Pod, node, mounted filesystem, initialized processes, and node-local cache state when the controller supports adoption. It must still atomically assign one owner, prove that the sandbox is ready and clean, replace run-scoped credentials, and prevent one tenant from inheriting another tenant's writable state. Warm inventory and node supply are two separate control loops with separate limits and failure signals.
+
 ### Worked grant: follow launcher policy into the runner
 
 The launcher owns this toy run grant:
@@ -159,6 +175,7 @@ Tool safety comes from the whole execution boundary, not the argument schema alo
 - Keep proposal, policy decision, normalized execution, and receipt separate. Bind each effect to an operation ID, and reconcile a timed-out write before retrying.
 - Treat 2025-11-25 MCP tasks as experimental deferred-result handles, not a substitute for durable execution or idempotency.
 - Use sandboxes to limit damage, keep secrets outside model context when a broker can supply them to an approved call, and report the exact layer that denied a request.
+- A warm-pool count normally means ready idle inventory. Claiming adopts one existing sandbox, while replenishment creates a replacement Pod and triggers node scaling only when current nodes cannot fit it.
 
 ## References
 

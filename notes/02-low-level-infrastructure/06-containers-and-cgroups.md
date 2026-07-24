@@ -48,6 +48,21 @@ A user namespace maps container IDs to host IDs and scopes many capability check
 
 > **Container boundary.** A kernel escape crosses every ordinary container on that host. Use a VM-backed runtime when the threat model requires a separate guest kernel.
 
+### RuntimeClass can insert a userspace kernel
+
+In Kubernetes, `runtimeClassName` selects a cluster-defined `RuntimeClass`. A value such as `gvisor` is a lookup name, not a built-in Kubernetes keyword. The `RuntimeClass` maps that name to a container-runtime handler, and that handler must be installed and configured on every node eligible to receive the Pod. Missing node support causes startup failure rather than an automatic fallback.
+
+The ordinary `runc` path lets the container process issue syscalls to the host kernel after namespace, cgroup, capability, seccomp, and LSM setup. gVisor's `runsc` path puts a userspace application kernel, called Sentry, between the process and a narrower host interface.
+
+```text
+runc:   process -> host Linux syscall interface
+gVisor: process -> Sentry userspace kernel -> narrower host interface
+```
+
+gVisor reduces direct host-kernel syscall exposure, but it still consumes CPU and memory on the same node and depends on host networking, storage, and scheduling. It is not a VM or a separate node. Compatibility and syscall-heavy performance can differ from ordinary containers. A `RuntimeClass` can declare scheduling constraints and runtime overhead, but the node image still has to install the handler.
+
+Kata Containers uses a different boundary: the workload runs with a guest kernel inside a virtual machine while Kubernetes retains Pod-oriented lifecycle. [LL9: MicroVMs and Kata](09-microvms-and-kata.md) compares that guest-kernel path with ordinary containers.
+
 ## An OCI start assembles kernel state before exec
 
 A container manager prepares an OCI bundle containing config.json and a root filesystem, then asks a low-level runtime to create the container. The runtime joins or creates the requested namespaces, places the process in its cgroup, constructs the mount tree, installs bind mounts and pseudo-filesystems, and changes the process's root. User and group ID mappings may need privileged setup outside the new user namespace before the child can continue.
@@ -150,6 +165,7 @@ A container is a host process assembled from several kernel contracts, not one i
 - Namespaces isolate selected views; the root filesystem and mounts define visible files; overlay layers add copy-up and whiteout behavior. None creates a separate kernel.
 - An image is packaged filesystem content and metadata. A running container is a set of host processes plus prepared kernel state; its writable layer is not an automatic durability boundary.
 - An OCI start prepares namespaces and ID maps, cgroup placement, root and mounts, credentials, limits, capabilities, seccomp, and LSM state before exec.
+- `runtimeClassName` selects an installed runtime handler. gVisor inserts a userspace kernel in front of a narrower host interface while still sharing node CPU, memory, networking, and storage.
 - Compare the OCI bundle with the live host process through status, cgroup, ID maps, namespace links, and mount information. An accepted configuration does not prove every intended control took effect.
 - Cgroup v2 uses one hierarchy. Parents expose controllers, enable them for children, and normally keep domain-controller processes in leaf cgroups; threaded subtrees have separate topology rules reported by cgroup.type.
 - CPU weight distributes contested time, CPU max can throttle, memory high can force reclaim stalls, memory max is a hard boundary, and pressure data reports time lost to contention.
@@ -161,6 +177,8 @@ A container is a host process assembled from several kernel contracts, not one i
 
 - [Linux kernel: cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html): Defines the unified hierarchy, controller enablement, delegation model, and resource files.
 - [Open Container Initiative: Linux runtime configuration](https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md)
+- [Kubernetes RuntimeClass](https://kubernetes.io/docs/concepts/containers/runtime-class/)
+- [gVisor with Kubernetes](https://gvisor.dev/docs/user_guide/quick_start/kubernetes/)
 - [systemd: control group APIs and delegation](https://systemd.io/CGROUP_DELEGATION/): Explains systemd ownership, Delegate=, and safe subtree management on cgroup v2.
 - [Kubernetes: cgroups v2](https://kubernetes.io/docs/concepts/architecture/cgroups/)
 - [Kubernetes: container resource management](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)

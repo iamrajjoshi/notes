@@ -101,6 +101,108 @@ operator stop -> admission gate + scheduler + active leases + tool broker
 all components -> traces, metrics, logs, and audit events
 ```
 
+### Worked interactive platform: keep the control service outside the sandbox
+
+An interactive coding platform often has a trusted control service and a less-trusted runner. The control service accepts provider events, owns run state, executes integration hooks, selects policy, acquires a sandbox, and handles callbacks. The runner executes the model and tool loop inside the sandbox.
+
+This concrete variant is different from the durable queue-and-lease topology above. It dispatches a run directly to one sandbox, while follow-up delivery, output streaming, post-hooks, and failure hooks use in-process background tasks. The later queue, lease, broker, and verifier trace is a stronger design pattern, not a claim that every component already exists in this interactive path.
+
+```text
+provider webhook
+  -> public gateway and signature verifier
+  -> privileged control service
+       -> create WebhookEvent audit row
+       -> atomically insert pending AgentRun
+       -> link event to the accepted run
+       -> await pre-hook
+       -> claim a warm sandbox
+       -> issue selected run configuration and short-lived credential
+       -> route active follow-up prompts
+       -> post-hook or failure hook
+  -> isolated runner
+       -> model and tool loop
+       -> workspace and scoped repository access
+```
+
+Pre-hooks, post-hooks, and failure hooks stay in the control service when they need provider bot tokens, workflow-tracking credentials, or clients with broader access than the code-running sandbox should have. The sandbox receives only the selected tier configuration, per-flow overrides, and credentials narrowed to that run, such as a short-lived repository token.
+
+This makes the control service a privileged security boundary. It must authenticate runner start, completion, audit, and prompt callbacks; validate every sandbox-supplied identifier and event; keep hook effects idempotent; and avoid copying long-lived credentials into the run payload, model context, transcript, or workspace. Moving a secret out of the sandbox reduces sandbox blast radius, but it does not reduce the control service's responsibility.
+
+The pre-hook is awaited after the run row is admitted and before sandbox dispatch. Post-hooks and failure hooks are spawned as in-process tasks. A control-service restart can therefore lose a post-hook and strand a row in `post_hooks_running`. Failure handling persists `failed` before spawning its failure hook, so `failed` proves the run status was written but does not prove the failure hook completed. There is no separate `failure_hooks_running` phase in this state machine. Durable hook execution would need a queue, outbox, or recoverable job record rather than `asyncio.create_task` alone.
+
+#### The run state machine separates model execution from integration cleanup
+
+| Phase                | Meaning                                                    | Blocks another active turn with the same key? |
+| -------------------- | ---------------------------------------------------------- | --------------------------------------------- |
+| `pending`            | Run row accepted; execution has not been dispatched        | Yes                                           |
+| `dispatched`         | Sandbox selected or starting                               | Yes                                           |
+| `agent_running`      | Model and tools are executing                              | Yes                                           |
+| `post_hooks_running` | Model execution ended; provider and workflow hooks remain  | No                                            |
+| `succeeded`          | Required run and hook work completed                       | No                                            |
+| `failed`             | Failure persisted; an asynchronous failure hook may remain | No                                            |
+| `aborted`            | Optional terminal for explicit cancellation or abandonment | No                                            |
+
+An enum value does not prove the implementation reaches it. If `aborted` exists but no transition writes it, treat it as reserved rather than an operational state until code and tests establish its entry rules.
+
+Suppose one external conversation may have only one model turn executing at a time. A read-then-insert sequence is unsafe:
+
+```text
+request A: query active run -> none
+request B: query active run -> none
+request A: insert
+request B: insert
+```
+
+Both reads are valid because neither insert existed yet. Put the invariant at the database write boundary. In generic pseudocode:
+
+```sql
+CREATE UNIQUE INDEX one_active_turn_per_key
+ON runs (idempotency_key)
+WHERE idempotency_key IS NOT NULL
+  AND phase IN ('pending', 'dispatched', 'agent_running');
+```
+
+The partial unique index covers only rows whose phase makes them active. Concurrent insertions race inside the database, one wins, and the other receives a uniqueness conflict that the API translates into “already active.” An application-level precheck can improve the error path but cannot replace the constraint.
+
+The flow defines the key's scope. One flow may key by provider session, another by issue, and another by pull-request head revision and attempt. A flow can return no key and opt out of this database uniqueness rule. PostgreSQL already treats nulls as distinct by default; the `IS NOT NULL` predicate also keeps unkeyed rows out of the partial index and documents the opt-out.
+
+Excluding `post_hooks_running` is deliberate. Once the model and tools have stopped, a new user continuation may acquire another sandbox while the previous run finishes provider updates. That overlap is safe only when post-hooks can no longer mutate the old sandbox and their provider writes have explicit ordering or idempotency. Otherwise the state boundary permits two actors to change the same logical result.
+
+The webhook audit event and run admission can also have different lifetimes. If each received delivery is recorded before the run insert, the losing request may leave an audit row without its own run. That row is legitimate evidence that another delivery arrived, but it should be marked deduplicated or linked to the winning run. An unexplained row looks orphaned even when the database correctly prevented duplicate execution.
+
+#### Stable provider identity routes to an ephemeral sandbox
+
+Keep the routing chain explicit:
+
+```text
+external conversation or issue ID
+  -> durable session and run record
+  -> active attempt
+  -> current sandbox name
+  -> current Pod and runner prompt endpoint
+```
+
+The application database owns the durable part. It can retain the external session ID in structured trigger data or a dedicated column and record the sandbox name when dispatch or claim succeeds. Prompt delivery constructs a per-sandbox Service name such as `sandbox-7c2.<namespace>.svc.cluster.local`; Kubernetes DNS resolves that Service, and its selector routes traffic to the selected runner Pod. The stored sandbox name is therefore an application-to-Service mapping, not a direct name-to-Pod lookup. Do not make a Pod IP or an in-memory process map the only copy of this relationship.
+
+One possible start handshake is:
+
+```http
+POST /runs/R204/start
+X-Sandbox-Name: sandbox-7c2
+```
+
+The header is a claimed execution identity, not proof by itself. Comparing it with the sandbox name already stored on the run binds the callback to an expected string and prevents an accidental mismatch. It does not stop a compromised sandbox that learns another sandbox's name from copying that value.
+
+A stronger design also binds the request to a source identity, for example authenticated workload identity, mutual TLS, a run-scoped token, or a verified source Pod address under strict network policy. After that check, the control service changes `dispatched` to `agent_running` through a guarded transition and returns the selected run configuration. A caller must not be able to impersonate another tenant's sandbox by choosing a header value.
+
+An active follow-up locates the run whose phase still blocks another turn and does not create a second run. The control service then spawns an in-process delivery task. That task reloads the run, waits up to three minutes while it remains `pending`, `dispatched`, or `agent_running`, and retries until a sandbox name and prompt endpoint are available. It finally posts the text to the runner's `/prompt` endpoint.
+
+Those are three different facts: the active-run lookup found a target, the background task attempted delivery, and the runner accepted the HTTP request. Only the last proves prompt acceptance. A control-service restart can drop the background task because the prompt is not first written to a durable delivery queue. After model execution ends, a later continuation creates a new run and sandbox, restores the selected main transcript, and records a new attempt. Conversation identity remains stable while execution, Service, Pod, and volume identities change.
+
+The concrete Linear path has no DynamoDB issue-to-run mapping. It searches the Postgres `AgentRun.trigger_payload` JSON for `linear_agent_session_input.id`; the code records a dedicated indexed column as future work. DynamoDB is available to individual flow hooks for other tracking state, such as CI classification and thread metadata, but it does not route these active Linear prompts.
+
+A separate key-value issue mapping would be a valid alternative when provider payloads do not carry an internal session key. Such a table could map provider, tenant, issue ID, and installation to an internal session or flow. It should remain a routing index, not a second source of truth for run phase, sandbox ownership, or external-effect completion.
+
 ### Normal trace: one patch run reaches a verified terminal state
 
 Suppose `POST /runs` carries caller key `fix-842` and a contract that permits a patch only inside `packages/parser`. The API stores run `R204` at checkpoint version 0 before returning `202 Accepted`; the response points to status, event, and cancellation endpoints.
@@ -110,6 +212,37 @@ The scheduler turns the accepted run into unit `U1`, writes that decision, then 
 Later, the broker accepts a patch call scoped to the same workspace. The sandbox applies it against base digest `B6`; the artifact store records patch digest `P9`, while the broker stores receipt `T14`. The verifier checks `P9` with the required parser test and type check, writes report digest `V4`, and returns a structured pass. `W7` advances the run through a compare-and-set from checkpoint version 6 to 7, linking `P9`, `V4`, the effective harness manifest, and the accepted terminal claim. Only then does it acknowledge the queue delivery. The status API reads the run store; it doesn't infer completion from an empty queue or a worker log.
 
 If the queue redelivers `U1` after that acknowledgement, a worker sees the terminal checkpoint and exits without repeating the patch or publishing a second result. Queue delivery and effect deduplication remain separate contracts.
+
+### Ordered asynchronous output is not automatically durable
+
+A model loop should not wait on a provider activity API after every useful thought or tool event. It can select user-relevant events, append them to one per-run queue, and let a background sender deliver them in order.
+
+```text
+model stream
+  -> select useful status events
+  -> in-memory ordered queue
+  -> one background sender
+  -> external activity API
+
+final response -> durable run store
+main transcript -> transcript or audit store
+```
+
+One sender preserves order without adding provider latency to every model iteration. The selected status event becomes durable after the external activity API accepts it. Before that acknowledgement, an in-memory queue is volatile; process loss can drop unsent events. This is asynchronous delivery, not a durable outbox.
+
+The final response and full transcript have separate persistence paths. Filtering noisy tool output from the provider's status feed does not imply deleting it from the model transcript or audit record. Conversely, saving a final response does not prove every earlier status event reached the provider.
+
+In the concrete interactive implementation, transport errors, non-200 responses, malformed JSON, and provider-declared failures are logged and the queue item is marked done. There is no retry or durable delivery receipt. Normal runner shutdown waits for the queue to drain, so provider latency is removed from individual model iterations but can still extend shutdown. Only activities accepted by the provider are durable there; a local “done” item means the sender finished handling it, not that the provider stored it.
+
+If progress events must survive restart, first write them to a durable outbox in the same transaction as the run transition, then let a sender claim and acknowledge them. Another option is to reconstruct status from a durable event log. For low-value progress hints, accepting possible loss can be a reasonable latency and complexity choice, but the contract should say so.
+
+### Finalize-time transcript upload leaves a crash window
+
+One transcript adapter in this interactive path buffers main-agent and subagent JSONL entries in runner memory. It writes the main object and separate subagent objects to S3 once during `finalize()`. Upload errors are logged and deliberately do not fail the run.
+
+That is an audit mirror with a large crash window, not a streaming journal. If the runner dies before `finalize()`, the entire current transcript can be absent; there is no partial object from which to continue. If a later resume cannot find the prior main transcript, it starts cold. The final response stored with the run row and the transcript object in S3 have separate durability, so either can exist without proving the other was saved.
+
+Reducing the window requires incremental immutable segment objects plus a durable head, followed by a finalization marker. An incomplete S3 multipart upload is not a readable transcript object and does not close this crash window. The resume path must define whether it accepts a partial transcript and how it validates ordering and completeness.
 
 ### Worker-loss trace: reconcile before another effect
 
@@ -254,6 +387,11 @@ Maintain the harness as a versioned service whose behavior depends on more than 
 - Change one main variable and repeat enough trials to separate a real effect from run-to-run variance.
 - Define rollout owner, maximum exposure, promotion checks, stop conditions, and rollback action before traffic reaches the candidate.
 - Keep run state, queue delivery, worker leases, model calls, tool effects, sandbox artifacts, verification, and operator stop as explicit production boundaries.
+- Keep privileged provider hooks and long-lived integration credentials in the trusted control service; give the sandbox only selected configuration and narrow run-scoped credentials.
+- Enforce active-turn uniqueness in the database. Treat model execution and post-hook cleanup as separate phases, and persist the stable provider-session-to-current-sandbox mapping used for follow-ups.
+- Follow-up delivery and post/failure hooks are process-local tasks in the worked interactive path. Active-run lookup or a persisted failure state does not prove prompt or hook completion.
+- An in-memory output queue can preserve send order without blocking model iteration, but unsent events remain volatile until a durable outbox or the external activity API accepts them. Logging and dropping a failed send is not a durable receipt.
+- A transcript buffered until finalization can vanish on runner failure. The run row, final response, main transcript, and subagent audit objects have separate durability.
 - In the worked design, version-checked writes preserve tenant policy, operation deduplication, reconciliation, and deterministic verification while rejecting stale observations.
 - Track active run versions and resumable checkpoints so an older workflow cannot wake into missing code.
 - Retire a path only after work has drained, audit records remain readable, and rollback no longer requires it.

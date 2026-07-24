@@ -211,9 +211,36 @@ This matters when GitOps, a Horizontal Pod Autoscaler (HPA), an admission contro
 
 ## Custom resources add nouns; operators add behavior
 
-A CustomResourceDefinition (CRD) extends the Kubernetes API with another resource type and schema. After the API server accepts that definition, clients can create custom objects and use ordinary API features such as watch, authorization, metadata, and finalizers. The CRD alone does not create a database, certificate, or cloud resource.
+A CustomResourceDefinition (CRD) extends the Kubernetes API with another resource type and schema. A **custom resource (CR)** is one object created from that type. If a CRD registers `WorkspaceClaim`, then `claim-42` is a CR of kind `WorkspaceClaim`. After the API server accepts the definition, clients can create those objects and use ordinary API features such as watch, authorization, metadata, and finalizers. The CRD alone does not create a database, certificate, or cloud resource.
 
 An **operator** is a controller that watches those custom objects and carries domain-specific reconciliation code. A database operator might turn a `DatabaseCluster` object into Pods, Services, claims, backups, and provider calls, then write health into status. This is ordinary control-loop architecture with a new API type, which means permissions, upgrades, finalizers, webhooks, and failure recovery all need owners.
+
+### A claim-oriented controller separates recipes, inventory, and ownership
+
+Consider four fictional custom kinds:
+
+| Custom resource     | Desired state in `spec`                                    | Reconciled result in `status` or child objects                        |
+| ------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| `WorkspaceTemplate` | Pod recipe plus an immutable filesystem-template reference | A reusable, versioned launch contract                                 |
+| `WorkspaceWarmPool` | Desired number of ready, unclaimed workspaces              | Enough `Workspace` CRs and Pods to restore idle inventory             |
+| `WorkspaceClaim`    | Template or pool selector, claimant, and lifetime          | Exactly one acquired `Workspace`, or a named pending or failed reason |
+| `Workspace`         | One concrete workspace's desired lifecycle                 | Its Pod, Service, readiness, owner, and cleanup progress              |
+
+The template is API configuration. It may point to a filesystem image, but it does not contain that image's files. The warm-pool controller creates workspaces from the template. A claim then adopts one ready unclaimed workspace instead of creating another Pod on the critical path.
+
+Acquisition needs an atomic ownership transition. A controller can use `resourceVersion`, a compare-and-set update, or another single-writer rule so two claims cannot both observe `available` and receive the same workspace. It records the winner in status, updates ownership references where the lifecycle requires them, and keeps reconciling from persisted state after a restart. A finalizer can delay claim or workspace deletion until credentials, Services, volumes, and provider-side state are cleaned up.
+
+```text
+WorkspaceWarmPool.spec.replicas = 3
+  -> controller maintains 3 ready unclaimed Workspace CRs
+
+WorkspaceClaim claim-42
+  -> atomically adopts workspace-b
+  -> status.workspace = workspace-b
+  -> pool controller creates a replacement workspace
+```
+
+`spec` says what the caller wants. `status` says what the controller has observed and assigned. `resourceVersion` detects a stale update. Owner references tell Kubernetes which objects are lifecycle dependents; they do not replace the controller's domain-specific ownership checks.
 
 ### A GitOps controller adds an earlier reconciliation loop
 
@@ -276,7 +303,7 @@ Kubernetes turns persisted intent into running state through several independent
 - The scheduler chooses and records a node; the kubelet and runtime create local processes, networking, and mounts.
 - Controllers must relist after a broken or stale watch and reconcile idempotently because notifications may be repeated or missed.
 - Server-Side Apply tracks field managers and reports ownership conflicts. A forced apply transfers field ownership; it should follow an ownership decision, not serve as the first repair command.
-- A CRD adds a custom API type and schema. An operator supplies the controller behavior that reconciles objects of that type; installing one without the other leaves either no accepted object or no domain action.
+- A CRD adds a custom API type and schema; a CR is one object of that type. An operator supplies behavior, and a claim-oriented controller needs an atomic persisted ownership transition before assigning one ready resource.
 - A finalizer delays deletion until its owning controller finishes external cleanup. Owner references and garbage collection handle dependent Kubernetes objects, which is a different concern.
 - Startup protects slow initialization, readiness gates traffic, and liveness requests restart. Dependency outages usually should not make all replicas fail liveness together.
 - Compare generation with observed generation, then follow owner references, Pod conditions, events, and component logs. Reapplying the same object rarely fixes a controller blocked on permissions, queues, or an external API.
