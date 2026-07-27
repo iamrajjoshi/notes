@@ -10,6 +10,21 @@ duration: 22–23 hours
 
 What sits below an application process: the Linux kernel, CPU scheduling, memory, storage, networking, containers, debugging, and virtual machines. The sequence starts with ordinary process behavior, defines each hardware or kernel term when it first matters, then follows failures through the same layers.
 
+## How the collection fits together
+
+```mermaid
+flowchart TB
+  accTitle: Low-level infrastructure learning path
+  accDescr: The kernel boundary leads to CPU scheduling, virtual memory, storage, and networking. Those mechanisms assemble into containers and a practical debugging method. A second branch adds virtual machines, microVMs, direct devices, and nested virtualization.
+
+  K["LL1<br/>Kernel boundary"] --> CORE["LL2–5<br/>CPU, memory, storage, and networking"]
+  CORE --> CTR["LL6<br/>Containers and cgroups"]
+  CTR --> DEBUG["LL7<br/>Debugging"]
+
+  CORE --> VM["LL8<br/>KVM, QEMU, and virtio"]
+  VM --> ADV["LL9–10<br/>MicroVMs, devices, and nesting"]
+```
+
 ## Reading path
 
 1. [The kernel boundary](01-kernel-boundary.md) separates programs, processes, threads, system calls, descriptors, credentials, and kernel policy.

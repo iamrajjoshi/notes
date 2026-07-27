@@ -64,17 +64,19 @@ Cloud infrastructure changes who owns hardware and how resources are provisioned
 
 Consider an inventory service with one item remaining:
 
-```text
-client                         server                         database
-  | Reserve(op-91)               |                                |
-  |----------------------------->|                                |
-  |                               | conditional decrement         |
-  |                               |------------------------------->|
-  |                               |                         COMMIT |
-  |                               |<-------------------------------|
-  |                         reply |                                |
-  |                         -X----|  connection breaks             |
-  | deadline expires              |                                |
+```mermaid
+sequenceDiagram
+  accTitle: A committed reservation whose reply is lost
+  accDescr: A client sends reservation operation op-91 to a server. The server conditionally decrements inventory and the database commits. The server then sends a success reply, but the connection breaks before the client receives it. The client sees only a deadline, so it cannot distinguish this committed outcome from several non-committed failures without an operation identity and reconciliation path.
+  participant C as Client
+  participant S as Inventory server
+  participant D as Database
+
+  C->>S: Reserve item 7 with operation op-91
+  S->>D: Conditional decrement and save result
+  D-->>S: COMMIT reservation 431
+  S--xC: Success reply lost with connection
+  Note over C,D: Client deadline expires after the business change committed
 ```
 
 From the client's viewpoint, the request failed. From the database's viewpoint, it committed. The same client observation would occur if the request never left the machine, if the server rejected it, or if the server crashed before committing. This is the **ambiguous outcome** at the center of remote state changes.

@@ -14,6 +14,19 @@ Read the notes in order. The sequence begins with the system model and an ordina
 
 The primary lecture source is the University of Illinois CS 425 / ECE 428 Fall 2025 course. Historical systems such as Napster, Chord, MapReduce, Storm, and the original Dynamo remain useful because their mechanisms recur in current systems. Product-specific claims are checked against current project documentation before they are presented as current behavior.
 
+## How the mechanisms depend on one another
+
+```mermaid
+flowchart TB
+  accTitle: Distributed systems learning path
+  accDescr: Remote-call uncertainty leads to time and failure detection. Group ordering and leadership lead to consensus. Consensus, membership, and time support partitioned and replicated storage, which then support distributed computation and shared abstractions. Security and recovery close the path.
+
+  RPC["DS1<br/>RPC uncertainty"] --> FOUND["DS2–4<br/>Time, failure detection, ordering, and election"]
+  FOUND --> STATE["DS5–7<br/>Consensus, partitioning, replication, and transactions"]
+  STATE --> FLOW["DS8–9<br/>Distributed computation and shared abstractions"]
+  FLOW --> CAP["DS10<br/>Security and recovery"]
+```
+
 ## Learning path
 
 | Note | Question answered                                                 | What it supplies to the next stage                                      |

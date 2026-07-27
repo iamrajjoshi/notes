@@ -25,12 +25,35 @@ The processor, RAM, storage, and network devices are hardware. The **kernel** is
 
 Each process receives a virtual address space so the same numeric address can refer to different memory in different processes. It cannot ordinarily read another process's memory or program a device directly. Instead it asks the kernel through system calls.
 
-```text
-program file --exec--> process
-process contains one or more threads
-thread runs application instructions in user space
-system call asks the kernel to act on a file, socket, memory range, or process
-kernel checks policy, touches hardware or kernel state, then returns a result
+```mermaid
+flowchart TB
+  accTitle: A user-space operation crosses the kernel boundary
+  accDescr: Application code calls a runtime or library wrapper in user space. A system call enters the kernel, which validates the request and the caller's authority, resolves a kernel object, and asks the appropriate subsystem to perform work. The subsystem may update kernel state or interact with hardware before a result returns to the process.
+
+  Program["Program file"] -- "exec" --> Process
+
+  subgraph User["User space: one process"]
+    Process["Process<br/>address space and credentials"]
+    Thread["Scheduled thread<br/>registers and stack"]
+    App["Application code"]
+    Runtime["Language runtime or libc"]
+    Process --> Thread --> App --> Runtime
+  end
+
+  subgraph Kernel["Kernel space"]
+    Entry["System-call entry"]
+    Check["Validate arguments<br/>and check authority"]
+    Object["Resolve kernel object<br/>file, socket, process, or mapping"]
+    Subsystem["Filesystem, network,<br/>memory, or process subsystem"]
+    Descriptor["Process descriptor table"]
+    Entry --> Check --> Object --> Subsystem
+    Descriptor -. "descriptor lookup" .-> Object
+  end
+
+  Hardware["CPU, memory, storage,<br/>and network devices"]
+  Runtime -- "syscall instruction" --> Entry
+  Subsystem --> Hardware
+  Subsystem -. "result or error" .-> Thread
 ```
 
 ## A syscall is a controlled entry, not a library call

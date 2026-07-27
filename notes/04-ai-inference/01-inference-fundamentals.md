@@ -51,9 +51,31 @@ Imagine a toy tokenizer turns `cats sleep` into IDs `[41, 92]`. An embedding tab
 
 Real models use much wider vectors, many layers, and large vocabularies, but the data path stays recognizable:
 
-```text
-text -> token IDs -> embeddings -> repeated model layers -> logits
-     -> choose one token -> append it -> repeat until a stop condition
+```mermaid
+flowchart LR
+  accTitle: Autoregressive text inference from request to streamed tokens
+  accDescr: The model server validates a text request and tokenizes it. Fixed model weights transform token IDs through embeddings and repeated layers into logits. A decoding rule selects one token. If no stop condition has been reached, the token is appended, its key and value state is retained, and another decode step runs. Selected tokens are detokenized and returned to the client.
+
+  Client["Client request<br/>prompt and limits"] --> Validate["Authenticate and<br/>validate request"]
+  Validate --> Tokenizer["Tokenizer"]
+  Tokenizer --> IDs["Token IDs"]
+
+  subgraph Runtime["Model runtime"]
+    IDs --> Embeddings["Embeddings"]
+    Embeddings --> Layers["Repeated model layers"]
+    Layers --> Logits["Vocabulary logits"]
+    Logits --> Decode["Decoding rule"]
+    Decode --> Stop{"Stop condition?"}
+    Stop -- "no" --> Append["Append selected token"]
+    Append --> Layers
+    Layers <--> KV["Per-request KV cache"]
+    Weights["Fixed checkpoint weights"] -.-> Embeddings
+    Weights -.-> Layers
+    Weights -.-> Logits
+  end
+
+  Stop -- "yes" --> Detokenize["Detokenize output IDs"]
+  Detokenize --> Response["Stream or return result"]
 ```
 
 A **context window** is the maximum sequence length a particular model and runtime configuration accepts. The input prompt and generated continuation both occupy it. A public request limit may be smaller to preserve memory, latency, or fairness.

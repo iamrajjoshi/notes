@@ -73,13 +73,28 @@ After another turn, the model proposes a patch. The harness checks the write set
 
 _Each arrow crosses an explicit boundary with a record that later steps can inspect._
 
-```text
-contract -> allowed paths + acceptance checks
-model -> read request
-host -> validated file result at revision r1
-model -> patch proposal
-host -> artifact r2 + focused-test receipt
-harness -> contract check + terminal status
+```mermaid
+sequenceDiagram
+  accTitle: A code repair through model, harness, sandbox, and verifier
+  accDescr: The harness records the task contract, supplies bounded context to the model, validates each proposed action, and executes accepted reads and writes in a sandbox. The sandbox returns versioned artifacts and test receipts. A deterministic verifier compares that evidence with the original contract before the harness records terminal success.
+  participant T as Task contract
+  participant H as Harness
+  participant M as Model
+  participant S as Sandbox executor
+  participant V as Verifier
+
+  T->>H: Allowed paths and acceptance checks
+  H->>M: Context and bounded capabilities
+  M-->>H: Propose file read
+  H->>S: Validate path and execute read
+  S-->>H: File result at revision r1
+  H->>M: Return observation
+  M-->>H: Propose patch
+  H->>S: Validate write, apply patch, run focused test
+  S-->>H: Artifact r2 and test receipt
+  H->>V: Contract, diff, and evidence
+  V-->>H: Accept or reject
+  H-->>T: Terminal status with evidence
 ```
 
 ## Run one read-only tool loop first

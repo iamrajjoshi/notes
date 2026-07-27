@@ -36,6 +36,33 @@ The main components divide work:
 
 Admission occurs inside the API request before persistence. Mutating admission can change the candidate object; validating admission can accept or reject it. Reconciliation starts after persisted state exists and can continue for the object's lifetime.
 
+```mermaid
+flowchart TB
+  accTitle: Kubernetes control-plane writes and workload data traffic
+  accDescr: An API client submits desired state to the API server, which applies the request pipeline and persists metadata in etcd. Controllers and the scheduler watch that state and write reconciliation decisions back through the API server. A node kubelet watches assigned Pods, asks the runtime to create processes, and reports status through the API server. User traffic goes to the running workload without passing through etcd or the API server.
+
+  Client["kubectl, GitOps, or controller"] --> API["API server<br/>authentication, authorization,<br/>admission, validation, conversion"]
+
+  subgraph Control["Control plane"]
+    API <--> Etcd["etcd<br/>desired and observed metadata"]
+    Etcd -. "watch desired state" .-> Controllers["Controllers"]
+    Controllers -- "create children or update status" --> API
+    Etcd -. "watch unscheduled Pods" .-> Scheduler["Scheduler"]
+    Scheduler -- "write node binding" --> API
+  end
+
+  subgraph Node["Worker node"]
+    Kubelet["Kubelet"]
+    Runtime["Container runtime"]
+    Workload["Application processes"]
+    Kubelet --> Runtime --> Workload
+  end
+
+  Etcd -. "watch assigned Pods" .-> Kubelet
+  Kubelet -- "status updates" --> API
+  User["User traffic"] --> Workload
+```
+
 ## An accepted object is a promise to reconcile
 
 The API server authenticates and authorizes requests, runs admission, validates objects, and persists cluster state in etcd, Kubernetes' strongly consistent metadata store. Returning success means the desired object exists; it doesn't mean a container is healthy. Controllers notice the new state and create or update dependent objects until observed state approaches intent.
@@ -65,12 +92,15 @@ Use the same discovery order for an unfamiliar resource:
 
 _Delivery explains why the desired object changed. Reconciliation explains what each controller did after that object existed._
 
-```text
-accepted Deployment
-  → Deployment controller writes ReplicaSet
-    → ReplicaSet controller writes Pod
-      → scheduler records node binding
-        → kubelet starts local workload state
+```mermaid
+flowchart TB
+  accTitle: Deployment reconciliation from accepted object to running process
+  accDescr: An accepted Deployment is observed by the Deployment controller, which creates a ReplicaSet. The ReplicaSet controller creates Pods. The scheduler records a node binding for each unscheduled Pod. The selected node's kubelet then creates the local sandbox and application processes.
+
+  D["Accepted Deployment"] -- "Deployment controller" --> RS["ReplicaSet"]
+  RS -- "ReplicaSet controller" --> P["Unscheduled Pod"]
+  P -- "scheduler records binding" --> B["Pod assigned to one node"]
+  B -- "kubelet and runtime" --> R["Sandbox and application processes"]
 ```
 
 ## The kubelet turns a binding into local processes
@@ -120,7 +150,11 @@ A production etcd cluster is a Raft replication group. One member is the leader 
 
 Commit latency therefore depends on more than CPU. It includes network delay between members and durable write-ahead-log work. The `fdatasync` system call asks the operating system to transfer changed file data and the metadata needed to retrieve it to the storage stack; the filesystem, device caches, and error path still determine the complete persistence promise described in [LL4: Linux storage and I/O](../02-low-level-infrastructure/04-storage-and-io.md#start-with-the-persistence-promise). A slow synchronization call, a slow quorum member, packet loss, or leader elections can delay API mutations even when application nodes are idle. If the group loses quorum, existing Pods may keep running on their nodes, but the control plane cannot commit new desired state, bindings, heartbeats, or status changes.
 
-etcd assigns one cluster-wide **revision** whenever a transaction changes the keyspace, even when that transaction changes several keys. Its multi-version concurrency control (MVCC) store retains older versions until compaction, which lets a watcher resume from a known revision. A **linearizable read** must behave as if it took effect at one instant between its request and response, after every write that completed before the read began; [DS7: Replication, consistency, and transactions](../06-distributed-systems/07-replication-consistency-and-transactions.md#define-consistency-from-histories-clients-can-observe) develops that client-visible guarantee. A watch serves a different contract: it receives ordered `PUT` and `DELETE` events after its start revision, but the stream is not itself a linearizable read and has no bounded delivery latency. If the requested history has already been compacted, the watcher must obtain current state again and resume from the newer revision. Kubernetes controllers implement this as list, watch, relist, and idempotent reconciliation.
+etcd assigns one cluster-wide **revision** whenever a transaction changes the keyspace, even when that transaction changes several keys. Its multi-version concurrency control (MVCC) store retains older versions until compaction, which lets a watcher resume from a known revision.
+
+A **linearizable read** must behave as if it took effect at one instant between its request and response, after every write that completed before the read began. [DS7: Replication, consistency, and transactions](../06-distributed-systems/07-replication-consistency-and-transactions.md#define-consistency-from-histories-clients-can-observe) develops that client-visible guarantee.
+
+A watch serves a different contract. It receives ordered `PUT` and `DELETE` events after its start revision, but the stream is not itself a linearizable read and has no bounded delivery latency. If the requested history has already been compacted, the watcher must obtain current state again and resume from the newer revision. Kubernetes controllers implement this as list, watch, relist, and idempotent reconciliation.
 
 The kube-apiserver keeps a watch cache so many reads and watches can use an in-memory view instead of repeatedly scanning etcd. Current Kubernetes releases can serve more consistent list reads from that cache when the required features and etcd versions are present. This reduces read pressure; it does not erase durable mutations, Raft replication, MVCC history, or downstream watch fan-out. Treat the exact cache behavior as version-sensitive.
 

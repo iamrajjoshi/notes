@@ -18,6 +18,27 @@ This collection separates three levels that are often mixed together:
 
 The levels interact, but none substitutes for another. JSON syntax does not explain MongoDB replication. SQL does not tell you whether rows live in a heap or clustered primary-key tree. A partition key does not state the consistency or durability of an acknowledged write.
 
+## How the collection fits together
+
+```mermaid
+flowchart TB
+  accTitle: Data systems learning path
+  accDescr: Access patterns lead to storage engines, query execution, and transaction behavior. Those foundations support relational, document, key-value, wide-column, analytic, lakehouse, and search systems. Change data capture connects authoritative and derived stores before the final selection case.
+
+  MODEL["DB1<br/>Models and access"] --> ENGINE["DB2<br/>Storage engines"]
+  ENGINE --> QUERY["DB3<br/>Indexes and queries"]
+  QUERY --> TXN["DB4<br/>Transactions"]
+
+  TXN --> SERVING["DB5–11<br/>Relational, document, and key-value systems"]
+  ENGINE --> ANALYTIC["DB12–13<br/>ClickHouse and lakehouse"]
+  QUERY --> SEARCH["DB14<br/>OpenSearch"]
+
+  SERVING --> CDC["DB15<br/>CDC and projections"]
+  ANALYTIC --> CDC
+  SEARCH --> CDC
+  CDC --> SELECT["DB16<br/>System selection"]
+```
+
 ## Reading order
 
 The foundation notes establish terms used by every product-specific note:

@@ -14,6 +14,19 @@ The sequence traces one request through a model server, estimates its memory and
 
 AI1 compares generation, embeddings and reranking, streaming speech, vision, diffusion, and asynchronous batch inference by request state, batching, latency, throughput unit, and failure mode. The remaining notes take autoregressive language-model serving as the deepest end-to-end case. The same measurement method transfers to other model families, but their production paths need separate hardware- and workload-specific study.
 
+## How the collection fits together
+
+```mermaid
+flowchart TB
+  accTitle: AI inference infrastructure learning path
+  accDescr: Inference fundamentals lead to one serving request and the GPU mechanisms beneath it. Serving engines and single-node optimization establish the local path before distributed execution, Kubernetes placement, performance operation, and the production capstone.
+
+  F["AI1–2<br/>Inference contracts and request lifecycle"] --> LOCAL["AI3–5<br/>GPU execution and local serving"]
+  LOCAL --> DIST["AI6–7<br/>Distributed execution and placement"]
+  DIST --> SRE["AI8<br/>Performance and SRE"]
+  SRE --> SAFE["AI9<br/>Safety and capstone"]
+```
+
 ## Reading path
 
 | Note                                                            | Why it comes here                                                                                                                   |

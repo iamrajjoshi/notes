@@ -1,15 +1,17 @@
 ---
 title: Containers and the Kubernetes object model
-description: Connect OCI images and Linux processes to Pods, controllers, configuration, and disposable workload instances.
+description: Connect processes and images to clusters, Pods, Deployments, Services, configuration, storage, and replaceable workload instances.
 slug: containers-and-kubernetes-objects
 order: 2
 identifier: CI2
-duration: 105 min
+duration: 150 min
 difficulty: Foundation
 tags:
   - OCI
   - containers
   - Pods
+  - Deployments
+  - Services
   - controllers
   - configuration
 ---
@@ -18,11 +20,60 @@ tags:
 
 An image is a packaged filesystem and launch contract. A container is a running process under isolation controls. A Pod is Kubernetes' smallest scheduling envelope.
 
+## Start with the application concepts Kubernetes assumes
+
+Kubernetes does not replace the application process, network protocol, or storage engine. It coordinates them. Before reading its object names, keep these ordinary runtime facts visible:
+
+| Application fact   | What Kubernetes needs from it                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Process            | An entrypoint that starts, remains in the foreground, reports failure through exit status, and stops on signal |
+| Listener           | An IP address and port where the process accepts traffic; declaring a port does not make a process listen      |
+| Health behavior    | A startup, readiness, or liveness signal whose failure has a stated consequence                                |
+| Packaged files     | An immutable image reference plus runtime configuration and mounted data                                       |
+| Durable state      | A database, object store, or volume contract that survives replacement when the workload requires it           |
+| Resource demand    | CPU, memory, storage, and optional devices that the scheduler and runtime can account for                      |
+| Network dependency | A resolvable name, route, policy, credential, deadline, and retry behavior                                     |
+| Declaration        | Structured YAML or JSON that identifies an API type and supplies a desired-state object                        |
+
+A process that only listens on `127.0.0.1` will not accept ordinary traffic sent to the Pod IP. A process that writes its only copy of an order to the container writable layer loses that state when the Pod is replaced. A health endpoint that reports a shared dependency outage as a liveness failure can make every replica restart together. Kubernetes executes the contract you declare; it cannot infer the intended behavior from the application.
+
+YAML is a common serialization format for Kubernetes objects, not the control system itself. Indentation forms nested maps and lists, `---` separates documents, and the API schema decides which fields are valid. The parsed object sent to the API server is the contract. A rendered manifest should therefore be reviewed and validated like any other API request.
+
+If one of these foundations is unfamiliar, [LL1: The kernel boundary](../02-low-level-infrastructure/01-kernel-boundary.md) explains processes, signals, files, sockets, and system calls; [LL6: Containers and cgroups](../02-low-level-infrastructure/06-containers-and-cgroups.md) explains namespaces and resource controls; and [CI1: AWS foundations](01-cloud-foundations.md) explains addresses, ports, DNS, routes, identity, and storage. You can begin here and follow those links only when the lower layer blocks the current explanation.
+
 ## Kubernetes coordinates processes across machines
 
 One machine can run a container directly. The harder production problem is keeping several copies alive across many machines, replacing failures, rolling out a new image, giving changing copies a stable network name, and attaching configuration or storage. Kubernetes addresses that problem through an API and controllers.
 
 A **cluster** is one Kubernetes control plane plus its worker **nodes**. A node is a machine, physical or virtual, that runs workload processes. The control plane stores desired objects and makes cluster-wide decisions. A node agent called the kubelet receives assigned Pods and asks a container runtime to start them. [CI3: Control planes, etcd, and reconciliation](03-control-planes-and-reconciliation.md) follows that full path.
+
+```mermaid
+flowchart TD
+  accTitle: Kubernetes cluster from API request to running containers
+  accDescr: A user or delivery controller sends object definitions to the Kubernetes API server. The control plane stores desired state and controllers create dependent objects. The scheduler assigns pending Pods to worker Nodes. Each Node's kubelet asks a container runtime to start the Pod's containers. The application process runs inside those containers rather than inside the control plane.
+
+  USER["User, CI system,<br/>or GitOps controller"] --> API["Kubernetes API server"]
+  API --> STORE["Persisted cluster objects"]
+  STORE --> CONTROLLERS["Controllers"]
+  STORE --> SCHED["Scheduler"]
+  CONTROLLERS --> PODS["Pending Pod objects"]
+  SCHED --> BIND["Pod-to-Node binding"]
+
+  subgraph NODEA["Worker Node A"]
+    KUBELETA["kubelet"] --> RUNTIMEA["container runtime"]
+    RUNTIMEA --> PODA["Pod<br/>one or more containers"]
+  end
+
+  subgraph NODEB["Worker Node B"]
+    KUBELETB["kubelet"] --> RUNTIMEB["container runtime"]
+    RUNTIMEB --> PODB["Pod<br/>one or more containers"]
+  end
+
+  BIND --> KUBELETA
+  BIND --> KUBELETB
+```
+
+`kubectl apply` sends desired object data to the API server. It does not SSH to a node or start a container directly. Controllers and node agents perform the later work, which is why an accepted manifest can still lead to a Pending Pod, failed image pull, unready process, or empty Service.
 
 Kubernetes objects use a common shape:
 
@@ -34,11 +85,16 @@ Kubernetes objects use a common shape:
 
 Labels are small identifying key-value pairs. Selectors use those labels to join objects, such as a Deployment to its Pods or a Service to its backends. A typo can produce valid YAML and valid objects that no longer select one another.
 
+Most application objects are namespaced. A namespace scopes names and can participate in quota, policy, and access control, but it is still inside one cluster and shares that cluster's control plane. Nodes, PersistentVolumes, and some other resources are cluster-scoped. A namespace does not create another VPC, node fleet, kernel, or Kubernetes cluster.
+
+The fields below `spec` depend on `kind`. A Deployment contains a Pod **template**, which is the recipe its controller uses to create Pod objects; the template is not itself a running Pod. A Service uses a label selector rather than embedding or owning those Pods.
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: orders
+  namespace: bookshop
 spec:
   replicas: 3
   selector:
@@ -52,9 +108,81 @@ spec:
       containers:
         - name: api
           image: registry.example/orders@sha256:<digest>
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  namespace: bookshop
+spec:
+  selector:
+    app: orders
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
 ```
 
-This declaration asks for three Pods. It does not say which nodes will run them, prove the image can start, or create a stable client address. Later controllers fill in those parts.
+The Deployment asks for three interchangeable Pods. The Service selects ready network endpoints carrying `app: orders`, gives clients a stable Service name and virtual address, accepts traffic on port `80`, and forwards it to the named `http` port on each selected Pod. The application still has to bind a listener on port `8080`; `containerPort` records intent and supplies a named port, but it does not open a socket or firewall rule.
+
+## A Deployment creates Pods; a Service routes to them
+
+These objects cooperate without doing the same job:
+
+| Object                  | Job                                                                  | What it does not do                                     |
+| ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------- |
+| Deployment              | Declares interchangeable replicas and rollout policy                 | Provide a stable client address or route external HTTP  |
+| ReplicaSet              | Maintains one revision's desired Pod count                           | Choose rollout strategy across revisions                |
+| Pod                     | Describes colocated containers, volumes, identity, and runtime needs | Survive replacement as one stable application instance  |
+| Service                 | Provides stable discovery and transport to selected endpoints        | Create, restart, or roll out Pods                       |
+| EndpointSlice           | Records batches of current backend addresses, ports, and readiness   | Decide the desired replica count                        |
+| Gateway or Ingress path | Routes external or cross-service protocol traffic to a Service       | Replace Service backend selection or Deployment rollout |
+
+```mermaid
+flowchart TB
+  accTitle: Deployment ownership and Service traffic are separate Kubernetes graphs
+  accDescr: A Deployment owns a ReplicaSet, which owns three replaceable Pods. A Service does not own those Pods; its selector matches their labels, and the control plane records ready Pod addresses in EndpointSlices. Internal clients call the Service DNS name. An optional Gateway or Ingress route sends external HTTP traffic to that same Service.
+
+  subgraph OWNERSHIP["Workload ownership and replacement"]
+    DEPLOY["Deployment<br/>replicas: 3"] --> RS["ReplicaSet<br/>one template revision"]
+    RS --> PODS["Three replaceable Pods<br/>label: app=orders"]
+  end
+
+  subgraph TRAFFIC["Discovery and traffic"]
+    INTERNAL["Internal client"] --> SVC["Service<br/>selector: app=orders"]
+    EXTERNAL["External client"] --> ROUTE["Gateway or Ingress route"]
+    ROUTE --> SVC
+    SVC --> EPS["EndpointSlice<br/>ready Pod IPs and target port"]
+  end
+
+  SVC -. "label selector" .-> PODS
+  EPS -. "ready addresses" .-> PODS
+```
+
+Ownership and selection have different lifecycle effects. Deleting a Deployment normally garbage-collects the ReplicaSets and Pods it owns. Deleting a Service does not delete selected Pods; it removes that stable traffic path and its managed EndpointSlices. Changing a Service selector can redirect traffic without creating a Deployment rollout. Changing the Deployment's Pod template creates a new ReplicaSet but leaves the Service identity in place as long as the new Pods carry matching labels.
+
+A Service with type `ClusterIP` is ordinarily reachable through cluster networking. `NodePort` adds a port on cluster nodes, and `LoadBalancer` asks an installed implementation to provision or connect an external load balancer. Gateway API or Ingress adds protocol-aware routes such as host and path matching in front of Services. [CI4: Kubernetes networking, storage, and security](04-kubernetes-networking-storage-security.md) follows those packet and controller paths.
+
+## Learn object families before memorizing fields
+
+| Family                        | Common objects                                                     | Question answered                                                                      |
+| ----------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| Workload                      | Pod, Deployment, StatefulSet, DaemonSet, Job, CronJob              | What should run, how many copies, with which identity and completion rule?             |
+| Discovery and traffic         | Service, EndpointSlice, Gateway, HTTPRoute, Ingress                | Which current endpoints receive which traffic?                                         |
+| Configuration and credentials | ConfigMap, Secret                                                  | Which runtime values are delivered to the Pod?                                         |
+| Storage                       | PersistentVolumeClaim, PersistentVolume, StorageClass, CSI objects | Which storage interface, lifecycle, topology, and provider satisfy the mount?          |
+| Scaling and disruption        | HorizontalPodAutoscaler, PodDisruptionBudget                       | When may replica intent change, and how much voluntary disruption is allowed?          |
+| Placement and isolation       | Node, Namespace, ResourceQuota, NetworkPolicy                      | Where can work run, which names and budgets are scoped, and which traffic is admitted? |
+| API extension                 | CustomResourceDefinition and custom resources                      | Which domain object and reconciliation behavior does an operator add?                  |
+
+An object name does not guarantee an implementation. A `Service` needs a functioning network data plane; a `NetworkPolicy` needs a network plugin that enforces it; a `PersistentVolumeClaim` needs matching storage or a provisioner; a custom resource needs a controller if creating it should cause domain work.
 
 ## An image isn't a tiny virtual machine
 
@@ -153,9 +281,14 @@ A Pending Pod points first to scheduling events, storage claims, namespace quota
 
 Kubernetes schedules process groups, not miniature machines. The image defines what to start, the Pod defines what must be colocated, and a controller defines how instances are replaced, completed, or kept present.
 
+- Kubernetes assumes an ordinary application contract: a foreground process, real listener, health behavior, resource demand, network dependencies, and an external durability plan for state that must survive replacement.
+- `kubectl apply` writes desired objects through the API server. Controllers, the scheduler, kubelets, and container runtimes perform the later work; an accepted object does not prove a running or reachable application.
 - An OCI image is layered filesystem content plus launch metadata; a container is a host-kernel process constrained by namespaces, cgroups, mounts, capabilities, and policy.
 - A Kubernetes cluster consists of a control plane and worker nodes. Nodes run Pods through kubelet and a container runtime; the control plane stores and reconciles objects rather than directly running application code.
 - Kubernetes objects separate identity in metadata, desired state in spec, and observed state in status. Labels and selectors connect controllers, Pods, and Services.
+- A Deployment owns ReplicaSets that own replaceable Pods. A Service selects matching endpoints and provides stable discovery; it does not create or roll out those Pods.
+- EndpointSlices record current Service backends. Gateway or Ingress routes can place protocol-aware external routing in front of a Service, while the Deployment remains responsible for workload replicas.
+- Namespaces scope many object names and policies inside one cluster. They do not create separate control planes, nodes, VPCs, or kernels.
 - Tags are movable registry names, while digests identify content. Promote the tested digest and treat signatures, provenance, scanning, and an SBOM as related but separate checks.
 - Containers in one Pod share a node, network namespace, and optionally volumes. They do not share filesystems or process namespaces by default.
 - Regular init containers finish before application startup. Restartable init containers provide native sidecar lifecycle on supported Kubernetes versions.
@@ -173,12 +306,16 @@ Kubernetes schedules process groups, not miniature machines. The image defines w
 - [Kubernetes cluster architecture](https://kubernetes.io/docs/concepts/architecture/)
 - [Understanding Kubernetes objects](https://kubernetes.io/docs/concepts/overview/working-with-objects/)
 - [Kubernetes labels and selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/)
+- [Kubernetes namespaces](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/)
 - [Kubernetes Pods](https://kubernetes.io/docs/concepts/workloads/pods/)
 - [Kubernetes init containers](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/)
 - [Kubernetes sidecar containers](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/)
 - [Kubernetes workload management](https://kubernetes.io/docs/concepts/workloads/controllers/)
 - [Kubernetes Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
 - [Kubernetes DaemonSets](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/)
+- [Kubernetes Services](https://kubernetes.io/docs/concepts/services-networking/service/)
+- [Kubernetes EndpointSlices](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)
+- [Kubernetes Gateway API](https://kubernetes.io/docs/concepts/services-networking/gateway/)
 - [Kubernetes ConfigMaps](https://kubernetes.io/docs/concepts/configuration/configmap/)
 - [Kubernetes Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
 - [Declarative management with Kustomize](https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/)

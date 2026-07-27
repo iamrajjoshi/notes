@@ -12,6 +12,19 @@ How to turn an ambiguous request into a bounded run, connect tools and context t
 
 The sequence defines the model, host runtime, and task contract before it introduces context assembly, MCP, durable state, verification, production authority, orchestration, evaluation, and maintenance. Bundled examples use scripted models and local state, so their programs and focused tests run without a model key or access to another repository. Design traces that are not implemented by those examples say so explicitly.
 
+## How the harness grows
+
+```mermaid
+flowchart TB
+  accTitle: Harness engineering learning path
+  accDescr: The model-host boundary leads to an executable task contract, selected context, and typed tools. Durable state and verification then support production safety, multi-agent orchestration, evaluation, and measured maintenance.
+
+  BOUND["HE1–2<br/>Model boundary and executable intent"] --> INPUT["HE3–4<br/>Context, tools, and sandboxes"]
+  INPUT --> STATE["HE5–6<br/>Durable state and verification"]
+  STATE --> OPS["HE7–9<br/>Safety, orchestration, and evaluation"]
+  OPS --> MAINT["HE10<br/>Maintenance"]
+```
+
 ## Reading path
 
 | Note                                                                   | Why it comes here                                                                                              |
@@ -36,3 +49,5 @@ The sequence defines the model, host runtime, and task contract before it introd
 - No model training or machine-learning research experience required
 
 [AI inference infrastructure](../04-ai-inference/INDEX.md) is optional background for how a model call is served. This collection treats the model call as one dependency and begins independently with the model-agent-host boundary.
+
+[Sandbox systems](../08-sandbox-systems/INDEX.md) continues below HE4's execution boundary. It covers the control plane, runtime isolation, warm capacity, filesystems, network identity, operations, and managed-platform choices needed to provide the harness with a safe remote computer.

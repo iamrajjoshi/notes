@@ -12,6 +12,19 @@ A method for producing and defending a design with traceable requirements, capac
 
 Read the notes in order. The first note shows how to turn a vague prompt into a bounded contract and explains the artifacts that appear in every later design. The sequence then follows one request through an API and the network before adding data modeling, relational-engine behavior, distribution, coordination, asynchronous work, caching, scheduling, and recovery. The final note combines those pieces in nine worked interview designs.
 
+## How the running design grows
+
+```mermaid
+flowchart TB
+  accTitle: System design learning path
+  accDescr: A bounded problem and capacity estimate lead to an API path and authoritative data model. The design then adds relational internals, partitioning, consistency, asynchronous work, overload control, scheduling, and regional recovery before the final interview studios.
+
+  FRAME["SD1–2<br/>Frame the problem and trace one request"] --> DATA["SD3–4<br/>Model data and understand the engine"]
+  DATA --> DIST["SD5–7<br/>Partition, coordinate, and move work asynchronously"]
+  DIST --> OPS["SD8–10<br/>Control overload, reconciliation, and recovery"]
+  OPS --> CASES["SD11<br/>Design studios"]
+```
+
 ## Orientation and decision ledger
 
 Every note continues the same illustrative system: merchants create and inspect tenant-scoped orders, update their status, and trigger email or push notifications. Payment execution, inventory ownership, template editing, and provider internals stay outside the boundary. The fixed workload is 1,000 average and 5,000 peak order creates each second, 20,000 peak reads each second, 4 KB per stored order, 30 days of hot history, p99 create latency below 250 ms, 99.9% monthly create availability, and 99% of notification dispatches starting within five seconds. The stress case assigns 20% of creates to one tenant; regional recovery targets a 15-minute RTO and 30-second RPO.

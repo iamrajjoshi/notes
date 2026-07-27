@@ -1,10 +1,10 @@
 ---
-title: "Cloud foundations: failure domains, identity, and traffic"
-description: Map AWS compute, failure domains, networks, identity, load balancers, storage, and encryption before adding Kubernetes.
+title: "AWS foundations: accounts, networks, compute, and service boundaries"
+description: Build an AWS resource map, then follow synchronous and asynchronous application paths through networking, compute, identity, storage, and operations.
 slug: cloud-foundations
 order: 1
 identifier: CI1
-duration: 190 min
+duration: 240 min
 difficulty: Foundation
 tags:
   - AWS
@@ -12,55 +12,129 @@ tags:
   - IAM
   - DNS
   - KMS
+  - SQS
+  - Lambda
   - Cloudflare
 ---
 
 ## Working model
 
-A cloud system is a set of failure boundaries joined by explicit identity and network decisions. Draw those boundaries before naming services.
+A cloud system is a set of provider resources joined by network paths, identities, and state transitions. Start with the account, Region, network, and service API that own each resource; a product name alone does not tell you where it runs, who may call it, or what survives failure.
 
-## Begin with one service, not with AWS names
+## Read AWS as a resource hierarchy
 
-A production web service is still application code running in processes. Infrastructure supplies the machines, network path, identity, durable state, and replacement machinery around those processes. Cloud services package some of that work behind provider APIs, but every package still has an input, output, owner, and failure boundary.
+AWS is a provider platform reached through service APIs. The browser console, AWS Command Line Interface (CLI), software development kits (SDKs), CloudFormation, the Cloud Development Kit (CDK), and Terraform all call those APIs. They differ in workflow and state ownership, but none bypasses the service control plane.
 
-Take `https://api.example.com/orders/123` as the starting point:
+An AWS Organization groups accounts. An account owns resources, identities, quotas, billing records, and audit history. Most application resources then have a Regional or zonal placement. The hierarchy is not a filesystem: a Virtual Private Cloud (VPC) does not contain IAM, and many managed services expose Regional endpoints without placing the service itself inside your VPC.
 
-1. A Domain Name System (DNS) resolver turns `api.example.com` into one or more Internet Protocol (IP) addresses. DNS answers where to try; it does not carry the application request.
-2. The client chooses an address and reaches it through IP routing. An IP address names a network interface, while a port identifies the receiving transport endpoint on that address. Hypertext Transfer Protocol Secure (HTTPS) normally uses port 443.
-3. Hypertext Transfer Protocol (HTTP) versions 1.1 and 2 ordinarily use a Transmission Control Protocol (TCP) connection. TCP supplies an ordered byte stream and retransmits lost data. HTTP/3 instead runs over QUIC and the User Datagram Protocol (UDP), so “HTTPS always means TCP” is no longer correct.
-4. Transport Layer Security (TLS) authenticates the server name with a certificate and negotiates protected communication. The client can then send an HTTP request containing a method, target, headers, and optional body.
-5. A reverse proxy or load balancer may terminate that connection, choose a healthy application target, and open or reuse a separate upstream connection. Success on the client connection does not prove the upstream request worked.
+```mermaid
+flowchart TD
+  accTitle: AWS resource hierarchy from organization to network interface
+  accDescr: An AWS Organization contains accounts. An account uses global or account-wide services and creates resources in Regions. A Region contains a VPC and several Availability Zones. Each subnet belongs to the VPC and exactly one Availability Zone, while network interfaces give selected resources private addresses inside those subnets. Regional managed services can expose service endpoints without living inside the VPC.
 
-That path gives an initial failure split. A name can fail to resolve, packets can lack a route, transport setup can time out, certificate validation can fail, a load balancer can have no healthy target, or the application can return an error. “The site is down” does not identify which boundary failed.
-
-```text
-URL
-  -> DNS name to IP address
-  -> IP route to address and port
-  -> TCP + TLS, or QUIC with TLS
-  -> HTTP request
-  -> edge or load balancer
-  -> application process
-  -> database, object, or another service
+  ORG["AWS Organization"] --> ACCOUNT["AWS account"]
+  ACCOUNT --> GLOBAL["Account-wide or global resources<br/>IAM, Organizations, Route 53"]
+  ACCOUNT --> REGION["AWS Region"]
+  REGION --> MANAGED["Regional managed services<br/>Lambda, S3, DynamoDB, ECS, EKS"]
+  REGION --> VPC["VPC<br/>regional IP network"]
+  REGION --> AZA["Availability Zone A"]
+  REGION --> AZB["Availability Zone B"]
+  VPC --> SUBA["Subnet A"]
+  VPC --> SUBB["Subnet B"]
+  AZA --> SUBA
+  AZB --> SUBB
+  SUBA --> ENIA["Network interfaces and resources"]
+  SUBB --> ENIB["Network interfaces and resources"]
 ```
 
-## Regions and zones are blast-radius choices
+An Amazon Resource Name (ARN) identifies a resource for APIs and policy. For example, `arn:aws:lambda:us-east-2:<account-id>:function:orders` names a Lambda function by partition, service, Region, account, and service-specific resource path. The angle-bracketed account ID is a placeholder, not a valid literal ARN. ARN formats vary by service, and not every resource includes every component. Treat an ARN as an exact identifier, not a display name.
+
+| Scope                      | Examples                                                         | Consequence                                                                                     |
+| -------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Organization or account    | Organization policy, IAM role, account quotas, billing, audit    | A credential or policy mistake can affect every allowed Region in that account                  |
+| Region                     | VPC, Lambda function, ECS cluster, EKS cluster, DynamoDB table   | Another Region needs separately created or replicated resources                                 |
+| Availability Zone          | Subnet, EC2 instance, EBS volume                                 | Losing that zone removes the zonal resource unless another copy or replacement exists elsewhere |
+| Edge or global entry layer | Route 53 records, CloudFront distribution, AWS global API layers | Global naming or routing still depends on healthy Regional origins and current configuration    |
 
 An AWS account is an ownership boundary for resources, identity policy, quotas, billing, and audit records. AWS Organizations groups accounts and can apply service control policies (SCPs). An SCP limits the permissions available to member accounts; it does not grant a permission by itself. Production, development, security, and shared-network accounts are often separated because one credential or configuration error should not reach everything.
 
-A region is a geographic AWS deployment area. Availability Zones inside it have separate facilities and failure risks, yet use low-latency regional links. A Virtual Private Cloud (VPC) is a logically isolated regional IP network. Its Classless Inter-Domain Routing (CIDR) blocks define address ranges; for example, `10.20.0.0/16` covers a larger range that can be divided into smaller subnet ranges. Each subnet belongs to one Availability Zone. A workload reaches the VPC through a network interface with one or more private addresses.
-
-Each subnet uses a route table. A route matches a destination prefix and names a next-hop target; the most specific matching prefix wins. A subnet with a route to an internet gateway is called public, but an IPv4 workload also needs a public address before the internet can initiate a connection to it. A private subnet lacks that direct route. It can still make outbound IPv4 connections through a NAT gateway without becoming a direct inbound target.
-
-That zonal subnet fact explains why a multi-zone service needs subnets, addresses, capacity, and reachable dependencies in more than one zone.
+A Region is a geographic AWS deployment area. Availability Zones inside it have separate facilities and failure risks, yet use low-latency Regional links. AWS does not automatically copy an ordinary Regional resource to another Region. Some services offer explicit cross-Region replication or global control layers, each with its own lag, failover, and authorization contract.
 
 A cell adds an application boundary on top of cloud boundaries. Cells can limit customer impact, deployment risk, and database contention, but they also create routing and data-placement work. Multi-zone and multi-cell solve different problems.
 
 > **Fictional case.** The bookshop used throughout these notes places customers into one of two workload cells. Each cell has its own compute, deployment cohort, and database partition. The names and values belong only to this worked example.
 
-## Start with the AWS service map
+## A VPC is a Regional network, and a subnet is zonal
 
-AWS service names make more sense when separated into three layers: the program being run, the scheduler or scaling control plane, and the machine or managed runtime that supplies compute.
+A VPC owns one or more Classless Inter-Domain Routing (CIDR) blocks. A block such as `10.20.0.0/16` supplies an address range that can be divided into smaller subnet ranges. Each subnet belongs to the VPC and exactly one Availability Zone. Resources such as EC2 instances, load balancer nodes, relational databases, and VPC-attached Lambda functions use Elastic Network Interfaces (ENIs) with addresses from selected subnets.
+
+Each subnet uses a route table. A route matches a destination prefix and names a next-hop target; the most specific matching prefix wins. A subnet with a route to an internet gateway is called public, but an IPv4 workload also needs a public address before the internet can initiate a connection to it. A private subnet lacks that direct route. It can still make outbound IPv4 connections through a NAT gateway without becoming a direct inbound target.
+
+Public and private are routing descriptions, not immutable subnet types. A name such as `private-app-a` documents intent but does not enforce it. Read the route table, addresses, gateway, security groups, and network access control lists (ACLs) that create the real path.
+
+```mermaid
+flowchart TB
+  accTitle: Two-zone VPC with public entry, private compute, and two egress paths
+  accDescr: Internet traffic crosses an internet gateway and reaches one regional Application Load Balancer through public subnets in two Availability Zones. The load balancer sends requests to application targets in private subnets. Private applications can reach ordinary internet destinations through NAT or supported AWS services through a VPC endpoint. Database subnets remain private and span both zones.
+
+  CLIENT["Internet client"] --> IGW["Internet gateway"]
+
+  subgraph VPC["VPC 10.20.0.0/16"]
+    ALB["Regional Application Load Balancer<br/>nodes in public subnets A and B"]
+
+    subgraph ZONES["Private application subnets in two Availability Zones"]
+      direction LR
+      APPA["Application target A<br/>Availability Zone A"]
+      APPB["Application target B<br/>Availability Zone B"]
+    end
+
+    DB["Multi-zone database deployment<br/>private DB subnets A and B"]
+    NATA["NAT gateway A"]
+    NATB["NAT gateway B"]
+    VPCE["VPC endpoint<br/>for a supported AWS service"]
+
+    ALB --> APPA
+    ALB --> APPB
+    APPA --> DB
+    APPB --> DB
+    APPA --> NATA
+    APPB --> NATB
+    APPA --> VPCE
+    APPB --> VPCE
+  end
+
+  IGW --> ALB
+  NATA --> INTERNET["Internet destinations"]
+  NATB --> INTERNET
+  VPCE --> SERVICE["Supported AWS service"]
+```
+
+The diagram shows a common shape, not a required template. A database subnet group selects subnets; it does not make an application multi-zone by itself. A load balancer needs healthy targets and enough subnet addresses. A NAT gateway provides a route, not IAM permission. Every arrow still needs DNS, routing, network policy, identity, timeout, and capacity decisions.
+
+Many managed services are reached through service endpoints rather than by placing the service in your VPC. S3 and DynamoDB are common examples. A gateway or interface VPC endpoint can give selected traffic a private VPC route, but the caller still needs IAM permission and the service may also evaluate resource and endpoint policies.
+
+Lambda uses provider-managed networking by default. When a function needs private VPC resources, its VPC configuration names subnets and security groups; Lambda then manages Hyperplane ENIs that connect its execution environments to those networks. That attachment changes reachability, not the function execution role's AWS API permissions.
+
+## Sort AWS services by the contract they own
+
+AWS has hundreds of named products. An introductory map needs service families and boundaries, not a catalog.
+
+| Need                              | Common services                                | First question                                                                                    |
+| --------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Run a virtual machine             | EC2                                            | Which image, instance type, subnet, storage, identity, and replacement owner?                     |
+| Maintain a VM fleet               | EC2 Auto Scaling                               | What sets minimum, desired, and maximum capacity, and what health causes replacement?             |
+| Run bounded functions             | Lambda                                         | What invokes the function, what is its concurrency budget, and where is durable state?            |
+| Orchestrate containers            | ECS or EKS                                     | Which API declares desired workloads and owns replacement and rollout?                            |
+| Supply managed container hosts    | Fargate, ECS Managed Instances, EKS Auto Mode  | Which host controls does the managed boundary remove or restrict?                                 |
+| Accept and route traffic          | Route 53, CloudFront, API Gateway, ALB, NLB    | Which protocol decision happens at each hop, and where does TLS terminate?                        |
+| Store application state           | S3, EBS, EFS, RDS, Aurora, DynamoDB            | Does the application need objects, blocks, files, relational records, or keyed items?             |
+| Buffer or route asynchronous work | SQS, SNS, EventBridge, MSK                     | Does one worker claim work, every subscriber receive it, or a rule route it?                      |
+| Persist a multi-step workflow     | Step Functions                                 | Which state, timer, retry, and external-effect boundary must survive a worker?                    |
+| Control identities and secrets    | IAM, STS, KMS, Secrets Manager                 | Which principal may perform which action on which resource under which condition?                 |
+| Observe and audit                 | CloudWatch, CloudTrail, AWS Config, AWS Health | Is the question about runtime behavior, API activity, resource configuration, or provider events? |
+| Provision and change resources    | CloudFormation, CDK, Terraform                 | Which versioned desired state owns the next update or deletion?                                   |
+
+The compute choices separate the program, the orchestrator or scaling control plane, and the host supply:
 
 | Service                          | Contract                                                                                                                                                   | What it does not decide for you                                                                                 |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -79,14 +153,112 @@ A block device exposes numbered byte ranges for reads and writes; a filesystem o
 
 _The orchestrator and compute layer are separate choices._
 
-```text
-HTTP request → DNS → ALB → target
-                            ├─ EC2 instance in an Auto Scaling group
-                            ├─ ECS task on Fargate, managed instances, or EC2
-                            └─ EKS Pod on Auto Mode, Fargate, or EC2 nodes
+```mermaid
+flowchart TB
+  accTitle: AWS application entry, compute, state, and asynchronous service map
+  accDescr: Clients enter through DNS, edge, gateway, or load-balancing services. Requests reach EC2, Lambda, ECS, or EKS compute. Compute reads and writes durable state, emits work to queues or event routers, and can start a persisted workflow. CloudWatch observes runtime signals, CloudTrail records selected API activity, and infrastructure-as-code tools change service configuration through AWS APIs.
 
-application state → S3 object | EBS block volume | EFS file | RDS database
+  CLIENT["Clients"] --> ENTRY["Route 53, CloudFront,<br/>API Gateway, ALB, NLB"]
+  ENTRY --> COMPUTE["EC2, Lambda,<br/>ECS tasks, EKS Pods"]
+  COMPUTE --> STATE["S3, EBS, EFS,<br/>RDS, Aurora, DynamoDB"]
+  COMPUTE --> ASYNC["SQS, SNS, EventBridge,<br/>or Step Functions"]
+  ASYNC --> WORKER["Lambda, ECS, EKS,<br/>or EC2 worker"]
+  WORKER --> STATE
+  OBS["CloudWatch"] -. "metrics, logs, alarms" .-> ENTRY
+  OBS -. "metrics and logs" .-> COMPUTE
+  AUDIT["CloudTrail and Config"] -. "API and configuration history" .-> COMPUTE
+  IAC["CloudFormation, CDK,<br/>or Terraform"] -. "AWS API changes" .-> ENTRY
+  IAC -. "AWS API changes" .-> COMPUTE
 ```
+
+## Separate control-plane changes from application data paths
+
+A control-plane API creates or configures resources. A data-plane request uses the resulting service. `CreateFunction` changes Lambda configuration; `Invoke` runs a function. An EC2 launch creates a virtual machine; HTTP or SSH traffic later reaches its network interface. Creating an S3 bucket and reading an object use different actions, limits, and audit settings.
+
+This distinction changes incident diagnosis. A successful infrastructure deployment proves that the service accepted configuration, not that a request can reach the resource or that the application result is correct. Conversely, a healthy request path does not prove that the next control-plane update will pass policy, quota, or rollout checks.
+
+Resource changes also need one declared owner. The console is useful for inspection, but an unrecorded console edit can drift away from CloudFormation or Terraform state. [CI9: Infrastructure as code and GitOps](09-infrastructure-as-code-and-gitops.md) follows planning, state, approval, apply, reconciliation, and rollback.
+
+## Follow one service request after drawing the AWS map
+
+A production web service is still application code running in processes. Infrastructure supplies the machines, network path, identity, durable state, and replacement machinery around those processes. Cloud services package some of that work behind provider APIs, but every package still has an input, output, owner, and failure boundary.
+
+Take `https://api.example.com/orders/123` as the starting point:
+
+1. A Domain Name System (DNS) resolver turns `api.example.com` into one or more Internet Protocol (IP) addresses. DNS answers where to try; it does not carry the application request.
+2. The client chooses an address and reaches it through IP routing. An IP address names a network interface, while a port identifies the receiving transport endpoint on that address. Hypertext Transfer Protocol Secure (HTTPS) normally uses port 443.
+3. Hypertext Transfer Protocol (HTTP) versions 1.1 and 2 ordinarily use a Transmission Control Protocol (TCP) connection. TCP supplies an ordered byte stream and retransmits lost data. HTTP/3 instead runs over QUIC and the User Datagram Protocol (UDP), so “HTTPS always means TCP” is no longer correct.
+4. Transport Layer Security (TLS) authenticates the server name and negotiates protected communication. The client can then send an HTTP request containing a method, target, headers, and optional body.
+5. A reverse proxy or load balancer may terminate that connection, choose a healthy application target, and open or reuse a separate upstream connection. Success on the client connection does not prove the upstream request worked.
+
+A name can fail to resolve, packets can lack a route, transport setup can time out, certificate validation can fail, a load balancer can have no healthy target, or the application can return an error. “The site is down” does not identify which boundary failed.
+
+```text
+URL
+  -> DNS name to IP address
+  -> IP route to address and port
+  -> TCP + TLS, or QUIC with TLS
+  -> HTTP request
+  -> edge or load balancer
+  -> application process
+  -> database, object, or another service
+```
+
+## Queue, topic, event bus, and workflow mean different things
+
+Synchronous HTTP keeps a caller waiting. Asynchronous services let producers and consumers run at different times, but the chosen mechanism still needs an acknowledgement, retry, ordering, retention, and poison-work policy.
+
+| Mechanism               | Delivery shape                                                                  | Common use                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| SQS Standard queue      | Consumers poll; one consumer receives a delivery at a time; delivery can repeat | Buffer jobs and let a worker fleet scale independently                                   |
+| SQS FIFO queue          | Ordered message groups plus queue-side deduplication rules                      | Preserve scoped order when throughput and integration limits fit                         |
+| SNS topic               | Push one publication to several independent subscriptions                       | Fan out notifications, often to one SQS queue per durable subscriber                     |
+| EventBridge event bus   | Match event fields against rules and route matching events to targets           | Connect AWS, software-as-a-service, and application events without one hard-coded target |
+| Kafka or Amazon MSK     | Retain partitioned records for independent consumer-group replay                | Keep an ordered history that several consumers read at their own positions               |
+| Step Functions workflow | Persist state-machine progress, choices, waits, retries, and task results       | Coordinate a multi-step operation that must outlive one process                          |
+
+SQS is a work backlog, SNS is push fan-out, EventBridge is a rule-based router, and Step Functions records workflow progress. They can be combined: an EventBridge rule can put an event on SQS, Lambda or an ECS worker can consume it, and Step Functions can invoke those services as tasks. Combining them does not create exactly-once business effects. Each consumer still needs a stable operation identity and either an idempotent effect or a reconciliation path.
+
+```mermaid
+flowchart LR
+  accTitle: Queue, topic, event bus, and workflow responsibilities
+  accDescr: A producer can put a job on an SQS queue for one worker fleet, publish to SNS for independent subscriptions, publish an event to EventBridge for rule-based routing, or start a Step Functions execution that persists multi-step progress. SNS and EventBridge can feed durable SQS queues before workers perform business effects.
+
+  PRODUCER["Producer"] --> SQS["SQS<br/>durable work backlog"]
+  SQS --> WORKERS["Competing worker fleet"]
+
+  PRODUCER --> SNS["SNS<br/>push fan-out"]
+  SNS --> QA["Subscriber queue A"]
+  SNS --> QB["Subscriber queue B"]
+  QA --> A["Subscriber A"]
+  QB --> B["Subscriber B"]
+
+  PRODUCER --> EB["EventBridge<br/>rules and targets"]
+  EB --> SQS
+  EB --> LAMBDA["Lambda target"]
+
+  PRODUCER --> SF["Step Functions<br/>persisted execution"]
+  SF --> LAMBDA
+  SF --> WORKERS
+  SF --> API["AWS or application API"]
+```
+
+[CI7: Kafka](07-kafka-replicated-event-log.md) compares the asynchronous shapes before following a retained record. [CI8: Celery](08-celery-task-processing.md) covers named tasks over a broker, and [CI11: Shared production services](11-shared-production-services.md) returns to queues and durable workflows as platform contracts.
+
+## Know which operations service answers the question
+
+AWS operating services record different evidence:
+
+| Service                   | Primary evidence                                                                    | It does not prove                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| CloudWatch                | Metrics, logs, alarms, dashboards, synthetic checks, and selected traces            | Which principal changed an IAM policy unless that activity is recorded elsewhere  |
+| CloudTrail                | Selected management, data, and network activity with caller and request fields      | Application correctness, complete packet flow, or every data operation by default |
+| AWS Config                | Recorded resource configuration, relationships, change history, and rule compliance | Runtime latency, successful application requests, or the intent behind a change   |
+| AWS Health                | Provider events and planned lifecycle changes relevant to an account                | Application-specific impact or whether a workload failed over successfully        |
+| Service Quotas            | Account-, Region-, or resource-scoped ceilings and adjustable quota values          | Capacity in a particular Availability Zone or headroom in a downstream database   |
+| Cost Explorer and Budgets | Metered cost history, forecasts, and budget notifications                           | Performance efficiency, resource necessity, or safe deletion                      |
+
+Keep timestamps, Region, account, resource ARN, application version, and request identity together. One CloudWatch alarm can point to an overloaded target while CloudTrail identifies a scaling-policy edit and Config shows the before-and-after resource configuration. None should be treated as a substitute for the others.
 
 ## Worked case: ALB to Auto Scaling to EC2
 
@@ -208,7 +380,11 @@ AWS Key Management Service (KMS) controls permission to use encryption keys, whi
 
 ## Routes move packets; storage keeps consequences
 
-The Domain Name System (DNS) resolves a name, a load balancer accepts a connection, route tables select the next hop, and security groups admit or reject flows. An internet gateway connects eligible public addresses to the internet. A network address translation (NAT) gateway gives private workloads outbound IPv4 access without making them inbound targets. A zonal NAT gateway belongs to one Availability Zone, so resilient designs either route each private subnet through a NAT gateway in its own zone or use a Regional NAT Gateway that expands across zones. Gateway and interface VPC endpoints can keep supported AWS-service traffic off a NAT path. Security groups are stateful: an allowed flow admits its reply traffic. Network access control lists (ACLs) are stateless subnet filters, so their inbound and outbound rules are evaluated separately.
+The Domain Name System (DNS) resolves a name, a load balancer accepts a connection, and route tables select the next hop. An internet gateway connects eligible public addresses to the internet. A network address translation (NAT) gateway gives private workloads outbound IPv4 access without making them inbound targets.
+
+A zonal NAT gateway belongs to one Availability Zone, so resilient designs either route each private subnet through a NAT gateway in its own zone or use a Regional NAT Gateway that expands across zones. Gateway and interface VPC endpoints can keep supported AWS-service traffic off a NAT path.
+
+Network policy remains separate from routing. Security groups are stateful: an allowed flow admits its reply traffic. Network access control lists (ACLs) are stateless subnet filters, so their inbound and outbound rules are evaluated separately.
 
 Networks also need explicit connections beyond one VPC. VPC peering connects two VPCs and is not transitive. Transit Gateway supplies a regional hub for many VPC and on-premises attachments. Site-to-Site VPN carries encrypted tunnels over an IP network, while Direct Connect supplies a dedicated network connection whose traffic encryption is a separate design choice. Route propagation does not replace address planning; overlapping CIDR ranges still prevent ordinary routing between networks.
 
@@ -256,12 +432,15 @@ For an AWS API failure, record the caller identity, action, resource, region, an
 
 A useful cloud diagram names failure domains, identities, packet paths, and state boundaries before it names products. That map makes availability claims testable and keeps network access, API authorization, and data durability from collapsing into one vague idea of “the cloud.”
 
+- An Organization groups accounts; an account owns resources, identity boundaries, quotas, billing, and audit history. Most application resources then have Regional or zonal scope, which determines what must be recreated or replicated elsewhere.
 - A VPC spans a region, but each subnet belongs to one Availability Zone. Multi-zone service design therefore needs usable subnets, capacity, egress, and dependencies on every surviving path. Zonal and Regional NAT gateways have different routing and failure models.
 - Zones limit infrastructure failure; application cells limit workload and customer impact. Neither boundary substitutes for the other.
 - EC2 supplies virtual machines; an Auto Scaling group manages an EC2 fleet; Lambda runs event-driven functions; ECS and EKS orchestrate containers; Fargate supplies managed compute to either orchestrator. Fargate is not a third scheduler.
+- SQS holds a work backlog, SNS pushes to independent subscriptions, EventBridge routes matching events, Kafka retains partitioned history, and Step Functions persists workflow progress. Each external effect still needs idempotency or reconciliation.
 - An ALB routes only to eligible targets, while an Auto Scaling group maintains fleet capacity. Connect load-balancer health to the group when an application-unhealthy instance should be replaced, and allow time for launch, startup, health checks, and draining.
 - API Gateway and Lambda have separate routing, permission, scaling, and error boundaries. Lambda concurrency is approximately request rate multiplied by average duration, but burst behavior, tail latency, quotas, and downstream capacity determine the safe limit.
 - IAM evaluates principal, action, resource, conditions, and explicit denies. Network reachability does not grant API authority, and short-lived workload roles are safer than static keys.
+- CloudWatch records runtime signals, CloudTrail records selected API activity, AWS Config records supported resource configuration, and Service Quotas records ceilings. These services answer different incident questions.
 - Trace ingress as DNS → edge proxy → load balancer → healthy target. A proxied hostname creates separate client-to-edge and edge-to-origin TLS connections, each with its own certificate and failure state.
 - S3 objects, zonal EBS volumes, EBS snapshots, and RDS deployments make different consistency, attachment, failover, and backup promises. Multi-AZ database failover and read scaling are separate requirements.
 - Diagnose DNS, transport, application, AWS API, and storage failures separately. Flow logs can establish packet acceptance or rejection, but cannot explain an HTTP 500, policy deny, or failed KMS operation.
@@ -271,6 +450,7 @@ A useful cloud diagram names failure domains, identities, packet paths, and stat
 - [AWS Regions and Availability Zones](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)
 - [AWS account and Organizations terminology](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_getting-started_concepts.html)
 - [AWS Organizations service control policies](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html)
+- [Amazon Resource Names](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html)
 - [Amazon EC2 concepts](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html)
 - [Amazon EC2 Auto Scaling](https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html)
 - [Use Elastic Load Balancing with an Auto Scaling group](https://docs.aws.amazon.com/autoscaling/ec2/userguide/autoscaling-load-balancer.html)
@@ -286,8 +466,17 @@ A useful cloud diagram names failure domains, identities, packet paths, and stat
 - [AWS Lambda aliases and weighted routing](https://docs.aws.amazon.com/lambda/latest/dg/configuring-alias-routing.html)
 - [AWS Lambda metrics](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-metrics-types.html)
 - [AWS Lambda application design](https://docs.aws.amazon.com/lambda/latest/dg/concepts-application-design.html)
+- [Giving Lambda functions access to VPC resources](https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html)
 - [API Gateway Lambda proxy integrations](https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html)
 - [API Gateway HTTP API metrics](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-metrics.html)
+- [Amazon SQS, SNS, or EventBridge decision guide](https://docs.aws.amazon.com/decision-guides/latest/sns-or-sqs-or-eventbridge/sns-or-sqs-or-eventbridge.html)
+- [AWS Step Functions concepts](https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html)
+- [AWS CloudFormation concepts](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/Welcome.html)
+- [AWS CDK concepts](https://docs.aws.amazon.com/cdk/v2/guide/home.html)
+- [Amazon CloudWatch concepts](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/WhatIsCloudWatch.html)
+- [AWS CloudTrail concepts](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-user-guide.html)
+- [How AWS Config works](https://docs.aws.amazon.com/config/latest/developerguide/how-does-config-work.html)
+- [AWS Service Quotas concepts](https://docs.aws.amazon.com/servicequotas/latest/userguide/intro.html)
 - [AWS IAM introduction](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html)
 - [How Amazon VPC works](https://docs.aws.amazon.com/vpc/latest/userguide/how-it-works.html)
 - [Amazon VPC IP addressing](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-ip-addressing.html)

@@ -46,6 +46,23 @@ For the conversation service, a transactional database can own conversation iden
 
 Adding a copy creates more than a data pipeline. The design now needs a source position, lag limit, schema contract, access policy, deletion path, rebuild procedure, and a rule for requests that arrive during recovery. If the system cannot say how to rebuild a projection, that projection has quietly become another authority.
 
+```mermaid
+flowchart LR
+  accTitle: Authoritative records and rebuildable copies for a conversation service
+  accDescr: Application commands commit conversation state, attachment metadata, and an outbox record in a transactional authority. Attachment bytes have their own object-storage authority. A relay copies versioned changes into search, cache, and analytics systems. Reads may use those projections only under stated freshness rules, while claims and other invariants return to the transactional authority.
+
+  App["Application command"] --> DB["Transactional authority<br/>conversations, claims, messages,<br/>attachment metadata, and outbox"]
+  App --> Object["Object-storage authority<br/>attachment bytes"]
+  DB --> Relay["Versioned change relay"]
+  Relay --> Search["Search projection"]
+  Relay --> Cache["Disposable cache"]
+  Relay --> Analytics["Analytic projection"]
+  Search -. "candidate IDs" .-> App
+  Cache -. "bounded stale reads" .-> App
+  Analytics -. "reports, not decisions" .-> App
+  Object -. "signed byte transfer" .-> App
+```
+
 ## Separate entities from aggregates
 
 An **entity** has a stable identity, such as a conversation, message, tenant, or user. An **aggregate** is the set of state changed under one consistency boundary. The two concepts overlap but are not identical. A conversation and its messages may form one conceptual product object while messages remain separate stored records because the history is unbounded.
